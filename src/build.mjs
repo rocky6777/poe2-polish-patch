@@ -221,6 +221,13 @@ async function main() {
   });
   process.stdout.write('\n');
 
+  // Font workaround: the game font has no glyph for U+0141 (capital "Ł"), so it
+  // renders as nothing (an invisible character). Lowercase U+0142 ("ł") DOES
+  // render, so we fold "Ł"->"ł" across all translated values. This keeps the
+  // Polish stroke-L readable (vs. dropping to a plain "L"). Protected tokens
+  // (link keys, {0}, <tags>, %1%) are ASCII English, so this can't break markup.
+  for (const [k, v] of map) if (v.includes('Ł')) map.set(k, v.replaceAll('Ł', 'ł'));
+
   await fs.mkdir(STAGE, { recursive: true });
   const translate = (s, ctx) => (shouldTranslate(ctx.column, s, ctx.table) ? map.get(s) ?? null : null);
   let written = 0, restored = 0, fields = 0;
