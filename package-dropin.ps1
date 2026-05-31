@@ -43,6 +43,17 @@ Copy-Item $index (Join-Path $dest '_.index.bin')
 $bundles | ForEach-Object { Copy-Item $_.FullName (Join-Path $dest 'LibGGPK3' $_.Name) }
 Copy-Item (Join-Path $PSScriptRoot 'enduser\README-DropIn.txt') (Join-Path $pkg 'README.txt')
 
+# Loot-filter localizer (pure PowerShell, no deps) + dictionary from build.mjs.
+$fdict = Join-Path $PSScriptRoot 'out\filter-dict.pl.json'
+if (Test-Path $fdict) {
+  $fdir = Join-Path $pkg 'LootFilter'
+  New-Item -ItemType Directory -Force $fdir | Out-Null
+  Copy-Item (Join-Path $PSScriptRoot 'enduser\Translate-Filter.ps1') $fdir
+  Copy-Item $fdict $fdir
+} else {
+  Write-Warning "No $fdict — run ./build.mjs --run to emit it; skipping loot-filter tool."
+}
+
 $zip = Join-Path $OutDir 'PoE2-Polish-DropIn.zip'
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path "$pkg\*" -DestinationPath $zip

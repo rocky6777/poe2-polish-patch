@@ -15,6 +15,7 @@ import { patchTable, readScalarStrings } from './datWriter.mjs';
 import { translateMany } from './translate.mjs';
 import { shouldTranslate, valueIsNonText } from './translatable.mjs';
 import { collectCsdStrings, patchCsd } from './csd.mjs';
+import { buildFilterDict } from './filter.mjs';
 import { pullLatest } from './remote.mjs';
 import { makeLoader } from './loader.mjs';
 
@@ -222,6 +223,15 @@ async function main() {
     csdWritten++; csdLines += res.stats.changed;
   }
   console.log(`Staged ${csdWritten} .csd files (${csdLines.toLocaleString()} stat lines) to:\n  ${STAGE_CSD}`);
+
+  // PASS 2c — emit the loot-filter dictionary (en->pl for the BaseType/Class
+  // columns the filter engine matches). Shipped alongside the patch so players
+  // can localize their own .filter; see src/filter.mjs and enduser/Translate-Filter.ps1.
+  const fdict = await buildFilterDict({ srcBalanceDir: SRCBAK, cache: Object.fromEntries(map), schema });
+  const fdictPath = path.join(import.meta.dirname, '..', 'out', 'filter-dict.pl.json');
+  await fs.writeFile(fdictPath, JSON.stringify([...fdict.entries()]));
+  console.log(`Wrote loot-filter dictionary (${fdict.size.toLocaleString()} BaseType/Class entries) to:\n  ${fdictPath}`);
+
   console.log('\nNext: apply with the C# tool (needs oo2core_9_win64.dll):');
   console.log('  ApplyPolish "<...>/Bundles2/_.index.bin"  out/staging');
 }

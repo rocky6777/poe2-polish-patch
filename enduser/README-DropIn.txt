@@ -37,6 +37,26 @@ HOW TO INSTALL
      is what now shows Polish.)
 
 --------------------------------------------------------------------------
+LOOT FILTERS  (important!)
+--------------------------------------------------------------------------
+  Because the game now shows Polish item names, an ENGLISH loot filter no
+  longer matches anything (the game compares your filter's BaseType / Class
+  text against the Polish names). Convert your filter to Polish first:
+
+    1. Open PowerShell in the "LootFilter" folder of this package.
+    2. Run:
+         .\Translate-Filter.ps1 -In "C:\path\to\YourFilter.filter"
+       This writes "YourFilter.pl.filter" with the BaseType / Class values
+       translated to the exact Polish names the patch uses. Everything else
+       (colours, sounds, tiers) is unchanged.
+    3. Copy the .pl.filter into
+         Documents\My Games\Path of Exile 2\
+       and select it in-game (Options -> UI -> Item Filter).
+
+  Any filter values it couldn't translate (e.g. partial-name rules) are
+  listed at the end so you can tweak them by hand.
+
+--------------------------------------------------------------------------
 HOW TO UNDO IT  (or if anything looks broken)
 --------------------------------------------------------------------------
   Easiest: Steam -> right-click Path of Exile 2 -> Properties ->

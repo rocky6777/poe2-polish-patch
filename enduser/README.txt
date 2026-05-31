@@ -33,6 +33,20 @@ IMPORTANT
   "Verify integrity of game files".
 
 ------------------------------------------------------------
+LOOT FILTERS
+------------------------------------------------------------
+Item names are now Polish, so an English loot filter stops matching. Convert
+yours to Polish (no extra installs needed):
+
+   powershell -ExecutionPolicy Bypass -File .\Translate-Filter.ps1 -In "C:\path\to\YourFilter.filter"
+
+It writes "YourFilter.pl.filter" with the BaseType / Class lines translated to
+the exact Polish names the patch uses; colours, sounds and tiers are unchanged.
+Put the .pl.filter in  Documents\My Games\Path of Exile 2\  and pick it in
+Options > UI > Item Filter. Values it can't translate (e.g. partial-name rules)
+are listed at the end so you can adjust them.
+
+------------------------------------------------------------
 TROUBLESHOOTING
 ------------------------------------------------------------
 - "Node.js not found"  -> install it (step 1), then run INSTALL.bat again.
