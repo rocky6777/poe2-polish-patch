@@ -4,30 +4,44 @@ PoE2 Polish Translation
 Unofficial machine-translated Polish for Path of Exile 2. It overwrites the
 game's English text, so you select "English" in-game and play in Polish.
 
-⚠ IMPORTANT
-- Path of Exile 2 is always-online. Modifying game files is against GGG's Terms
-  of Service and is done AT YOUR OWN RISK (possible account action). This is a
-  fan project, not endorsed by or affiliated with Grinding Gear Games.
-- Re-apply after each game patch (run install.ps1 again).
-- To UNINSTALL / revert: Steam > Path of Exile 2 > Properties > Installed Files
-  > "Verify integrity of game files" (re-downloads the originals).
+------------------------------------------------------------
+QUICK START
+------------------------------------------------------------
+1) Install Node.js (one time):  https://nodejs.org  (click the LTS button,
+   install with default options).
 
-REQUIREMENTS
-1) Node.js 20 or newer        https://nodejs.org   (just install, defaults are fine)
-2) oo2core_9_win64.dll        Copy this file from any Unreal Engine 4/5 game you
-   own (look in that game's ...\Binaries\Win64\ folder) and drop it into THIS
-   folder, next to install.ps1. We cannot include it — it is proprietary.
+2) Get oo2core_9_win64.dll:
+   Copy this file from any Unreal Engine 4/5 game you own — look in that game's
+   folder under  ...\Binaries\Win64\oo2core_9_win64.dll  — and put it in THIS
+   folder (next to INSTALL.bat). We cannot include it (it is proprietary).
 
-INSTALL
-1) Put oo2core_9_win64.dll in this folder.
-2) Right-click install.ps1 > "Run with PowerShell".
-   (Or in a terminal:  pwsh -File .\install.ps1 )
-   If it can't find your game:  pwsh -File .\install.ps1 -Poe2Dir "X:\path\to\Path of Exile 2"
-3) Launch the game, Options > Language > English. You're now playing in Polish.
+3) Double-click  INSTALL.bat
+   Wait for "Done!". That's it.
 
-NOTES
-- Translation is machine-generated; some terms read oddly. Proper nouns
-  (Path of Exile, place/skill names) are intentionally left untranslated where
-  configured.
-- Strings added in a newer patch that aren't in this pack will stay English
-  until the pack is updated.
+4) Launch Path of Exile 2 > Options > Language > English. You're in Polish.
+
+------------------------------------------------------------
+IMPORTANT
+------------------------------------------------------------
+- This is a fan project, NOT affiliated with Grinding Gear Games. PoE2 is
+  always-online; modifying game files is against GGG's Terms of Service and is
+  done AT YOUR OWN RISK.
+- Re-run INSTALL.bat after each game update (it re-applies + grabs the newest
+  translations automatically).
+- UNINSTALL / revert to English:
+  Steam > Path of Exile 2 > Properties > Installed Files >
+  "Verify integrity of game files".
+
+------------------------------------------------------------
+TROUBLESHOOTING
+------------------------------------------------------------
+- "Node.js not found"  -> install it (step 1), then run INSTALL.bat again.
+- "oo2core ... not found" -> you missed step 2; the dll must sit next to
+  INSTALL.bat (it gets copied to bin\oo2core.dll automatically).
+- "Could not find Path of Exile 2" -> your game is on an unusual drive. Open
+  PowerShell in this folder and run:
+     powershell -ExecutionPolicy Bypass -File .\install.ps1 -Poe2Dir "X:\path\to\Path of Exile 2"
+- Windows SmartScreen warns about the .bat -> "More info" > "Run anyway"
+  (it only launches install.ps1, which is plain text you can read).
+- Some menus/skills still show English: those are proper nouns or strings not
+  yet translated in the current pack; they update over time.

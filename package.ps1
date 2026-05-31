@@ -26,6 +26,7 @@ Copy-Item (Join-Path $root 'src')          $pkg -Recurse
 Copy-Item (Join-Path $root 'node_modules') $pkg -Recurse
 Copy-Item (Join-Path $root '.cache\schema.min.json')      (Join-Path $pkg '.cache')
 Copy-Item (Join-Path $root '.cache\translations.pl.json') (Join-Path $pkg '.cache')
+Copy-Item (Join-Path $root 'enduser\INSTALL.bat')  $pkg   # double-click launcher
 Copy-Item (Join-Path $root 'enduser\install.ps1')  $pkg
 Copy-Item (Join-Path $root 'enduser\README.txt')   $pkg
 Copy-Item (Join-Path $root 'patcher.config.json')  $pkg   # repo URL for auto-update
@@ -34,6 +35,7 @@ Copy-Item (Join-Path $root 'patcher.config.json')  $pkg   # repo URL for auto-up
 $zip = Join-Path $OutDir 'PoE2-Polish-Patch.zip'
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path "$pkg\*" -DestinationPath $zip
-$n = (Get-Content (Join-Path $root '.cache\translations.pl.json') -Raw | ConvertFrom-Json -AsHashtable).Count
+# Count via node (PowerShell's JSON parser rejects the case-only-differing keys).
+$n = & node -e "process.stdout.write(String(Object.keys(require(process.argv[1])).length))" (Join-Path $root '.cache\translations.pl.json')
 Write-Host "`nPackage: $zip" -ForegroundColor Green
 Write-Host ("Size: {0} MB | translations bundled: {1}" -f [math]::Round((Get-Item $zip).Length/1MB,1), $n) -ForegroundColor Green

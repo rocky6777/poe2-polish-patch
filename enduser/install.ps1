@@ -1,18 +1,19 @@
-#requires -Version 7
+#requires -Version 5.1
 <#
   PoE2 Polish translation — installer (end users).
   Applies the bundled Polish translation to YOUR Path of Exile 2 install.
-  No internet needed: it uses the translation pack shipped in this folder.
+
+  EASIEST: just double-click INSTALL.bat (handles everything below).
 
   Prerequisites:
-    1) Node.js 20+         -> https://nodejs.org
+    1) Node.js 20+         -> https://nodejs.org   (install, then it just works)
     2) oo2core_9_win64.dll -> copy from any Unreal Engine 4/5 game's binaries
        folder into this folder (next to install.ps1). We can't ship it (it's
-       proprietary). It will be renamed to oo2core.dll automatically.
+       proprietary). It is copied to bin\oo2core.dll automatically.
 
-  Usage (right-click > Run with PowerShell, or in a terminal):
-    ./install.ps1
-    ./install.ps1 -Poe2Dir 'D:\Steam\steamapps\common\Path of Exile 2'
+  Manual run (if not using INSTALL.bat):
+    powershell -ExecutionPolicy Bypass -File .\install.ps1
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -Poe2Dir 'D:\Steam\steamapps\common\Path of Exile 2'
 #>
 param([string]$Poe2Dir)
 
