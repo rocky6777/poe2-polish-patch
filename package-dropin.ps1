@@ -7,12 +7,15 @@
   No Node.js, no .NET, no oo2core on the user's machine.
 
   PREREQUISITE: a CLEAN apply must already be in the live game folder, i.e.
-    1. (recommended) Steam -> Verify integrity of game files   # pristine base
-    2. node src\build.mjs --run                                 # stage Polish
-    3. ApplyPolish "<game>\Bundles2\_.index.bin" out\staging     # write patch
-  Starting from a verified base means LibGGPK3 holds exactly ONE bundle (no
-  orphans from earlier applies); this script copies whatever bundles are
-  present, so a clean base keeps the package minimal.
+    1. (recommended) Steam -> Verify integrity of game files   # pristine index
+    2. Remove-Item "<game>\Bundles2\LibGGPK3" -Recurse -Force   # drop orphans!
+    3. node src\build.mjs --run                                 # stage Polish
+    4. ApplyPolish "<game>\Bundles2\_.index.bin" out\staging     # write patch
+  NOTE: Verify integrity resets _.index.bin but does NOT delete the LibGGPK3
+  folder (Steam doesn't track it), so old *.bundle.bin orphans survive and this
+  script would copy them too (bloating the zip). Step 2 deletes them so a single
+  apply leaves exactly ONE referenced bundle. The warning below catches the case
+  where you forgot.
 #>
 param(
   [string]$GameDir = 'D:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2',

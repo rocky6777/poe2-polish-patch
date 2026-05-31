@@ -17,7 +17,7 @@ import { shouldTranslate, valueIsNonText } from './translatable.mjs';
 import { collectCsdStrings, patchCsd } from './csd.mjs';
 import { buildFilterDict } from './filter.mjs';
 import { pullLatest } from './remote.mjs';
-import { makeLoader } from './loader.mjs';
+import { makeLoader, listDirFiles } from './loader.mjs';
 
 const STEAM = process.env.POE2_DIR || 'D:\\Program Files (x86)\\Steam\\steamapps\\common\\Path of Exile 2';
 // Source = English base locale (Data/Balance/*.datc64). We overwrite these, so
@@ -34,10 +34,24 @@ const SRCBAK = path.join(import.meta.dirname, '..', 'out', 'source-en', 'Data', 
 // These live in NO .datc64 table — they're translated by src/csd.mjs and staged
 // under Data/StatDescriptions so ApplyPolish writes them into the same index.
 const CSD_DIR = 'Data/StatDescriptions';
-const CSD_FILES = [
+// Fallback list if directory enumeration fails. The build prefers the live list
+// from listDirFiles() so newly-added content files (atlas, expedition, sanctum,
+// tablet, flasks, …) are picked up automatically instead of staying English.
+const CSD_FILES_FALLBACK = [
   'stat_descriptions.csd', 'skill_stat_descriptions.csd',
   'active_skill_gem_stat_descriptions.csd', 'passive_skill_stat_descriptions.csd',
   'map_stat_descriptions.csd', 'monster_stat_descriptions.csd',
+  'atlas_stat_descriptions.csd', 'atlas_variant_stat_descriptions.csd',
+  'gem_stat_descriptions.csd', 'meta_gem_stat_descriptions.csd',
+  'advanced_mod_stat_descriptions.csd', 'chest_stat_descriptions.csd',
+  'endgame_map_stat_descriptions.csd', 'map_temple_room_stat_descriptions.csd',
+  'expedition_relic_stat_descriptions.csd', 'expedition_relic_special_stat_descriptions.csd',
+  'sanctum_relic_stat_descriptions.csd', 'leaguestone_stat_descriptions.csd',
+  'sentinel_stat_descriptions.csd', 'heist_equipment_stat_descriptions.csd',
+  'primordial_altar_stat_descriptions.csd', 'tablet_stat_descriptions.csd',
+  'utility_flask_buff_stat_descriptions.csd', 'passive_skill_aura_stat_descriptions.csd',
+  'passive_skill_variant_stat_descriptions.csd',
+  'character_panel_stat_descriptions.csd', 'character_panel_gamepad_stat_descriptions.csd',
 ];
 const STAGE_CSD = path.join(import.meta.dirname, '..', 'out', 'staging', CSD_DIR);
 const SRCBAK_CSD = path.join(import.meta.dirname, '..', 'out', 'source-en', CSD_DIR);
@@ -118,6 +132,17 @@ async function main() {
 
   const schema = await loadSchema();
   const loader = await makeLoader(STEAM);
+
+  // Discover every stat-description .csd from the bundle index (fall back to the
+  // known list if enumeration fails) so new content files don't stay English.
+  let CSD_FILES;
+  try {
+    CSD_FILES = await listDirFiles(STEAM, CSD_DIR, '.csd');
+    if (!CSD_FILES.length) throw new Error('empty');
+  } catch (e) {
+    console.warn(`(.csd enumeration failed: ${e.message}; using fallback list)`);
+    CSD_FILES = CSD_FILES_FALLBACK;
+  }
 
   // Candidate tables: PoE2 schema rows with >=1 string column, deduped by name.
   const seen = new Set();
@@ -231,8 +256,9 @@ async function main() {
   const fdictPath = path.join(import.meta.dirname, '..', 'out', 'filter-dict.pl.json');
   await fs.writeFile(fdictPath, JSON.stringify({
     item: [...fdict.item.entries()], mod: [...fdict.mod.entries()],
+    itemNames: [...fdict.itemNames], modNames: fdict.modNames,
   }));
-  console.log(`Wrote loot-filter dictionary (${fdict.item.size.toLocaleString()} item + ${fdict.mod.size.toLocaleString()} mod entries) to:\n  ${fdictPath}`);
+  console.log(`Wrote loot-filter dictionary (${fdict.item.size.toLocaleString()} item + ${fdict.mod.size.toLocaleString()} mod entries; ${fdict.itemNames.size.toLocaleString()} base/class + ${fdict.modNames.length.toLocaleString()} mod names) to:\n  ${fdictPath}`);
 
   console.log('\nNext: apply with the C# tool (needs oo2core_9_win64.dll):');
   console.log('  ApplyPolish "<...>/Bundles2/_.index.bin"  out/staging');

@@ -35,61 +35,89 @@ const KEYWORD_GROUP = {
   hasexplicitmod: 'mod', hasimplicitmod: 'mod', hasmod: 'mod',
 };
 
-// Build en->pl maps for the filterable columns from the pristine English tables +
-// the translation cache. Only includes entries whose in-game value actually
-// CHANGED (skipped/identity columns keep English, so the filter keeps English too).
-// Returns { item: Map, mod: Map }.
+// The in-game value of an English string after patching: its Polish translation
+// if we translated that column, else the unchanged English.
+const inGameValue = (cache, col, table, en) =>
+  (shouldTranslate(col, en, table) && cache[en]) ? cache[en] : en;
+
+// Build, from the pristine English tables + the translation cache:
+//   item / mod : en->pl Maps of CHANGED entries (for rewriting filter values)
+//   itemNames  : the full SET of valid in-game base/class names (for == validation)
+//   modNames   : the full LIST of valid in-game mod names (for substring validation)
+// The name sets are what the game actually holds, so we can drop any filter value
+// that matches nothing — those otherwise make the WHOLE filter fail to load
+// ("No base types found exactly matching ..." / "No mods found matching ...").
 export async function buildFilterDict({ srcBalanceDir, cache, schema } = {}) {
   schema ??= await loadSchema();
-  const out = {};
+  const out = { itemNames: new Set(), modNames: new Set() };
   for (const [group, tables] of Object.entries(DICT_TABLES)) {
     const dict = new Map();
+    const nameSet = group === 'item' ? out.itemNames : out.modNames;
     for (const [table, col] of tables) {
       let buf;
       try { buf = readFileSync(path.join(srcBalanceDir, table + '.datc64')); }
       catch { continue; }
       const cols = readScalarStrings(buf, table, schema, ValidFor.PoE2);
       for (const en of cols[col]) {
-        if (!en || dict.has(en)) continue;
-        if (!shouldTranslate(col, en, table)) continue; // kept English in-game
-        const pl = cache[en];
-        if (pl && pl !== en) dict.set(en, pl);
+        if (!en) continue;
+        const ig = inGameValue(cache, col, table, en);
+        nameSet.add(ig);
+        if (!dict.has(en) && ig !== en) dict.set(en, ig); // changed -> translation entry
       }
     }
     out[group] = dict;
   }
+  out.modNames = [...out.modNames]; // list, for substring scans
   return out;
 }
 
-// A condition line starts (after indentation) with one of these keywords.
+// A condition line starts (after indentation) with one of these keywords; the
+// op group captures any comparison operator (== marks an EXACT-match rule).
 const VALUE_KEYWORDS = /^(\s*)(BaseType|Class|HasExplicitMod|HasImplicitMod|HasMod)(\b[^\S\r\n]*(?:==|!=|<=|>=|=|<|>)?[^\S\r\n]*)(.*)$/;
 const QUOTED = /"([^"]*)"/g;
 
-// Translate one filter's text using { item, mod } dictionaries. Returns
-// { text, stats:{ lines, values, translated, misses, modMisses } } where misses is
-// the set of untranslated values (left as-is); modMisses is the subset on mod rules
-// — those are the dangerous ones (a non-matching mod value fails the whole filter).
+// Is a value matchable in-game? item == rules need an exact base/class name;
+// mod rules (always substring) need the value to be a substring of some mod name.
+// Non-exact item rules are partial matches that never hard-fail, so anything goes.
+function isMatchable(group, exact, val, dicts) {
+  if (group === 'mod') return dicts.modNames.some((n) => n.includes(val));
+  if (exact) return dicts.itemNames.has(val);
+  return true;
+}
+
+// Translate one filter into Polish AND make it load cleanly: each BaseType /
+// Class / Has*Mod value is rewritten to its in-game Polish name, and any value
+// that matches nothing in-game is DROPPED (those otherwise fail the whole filter).
+// A rule whose values are all dropped is commented out so the file still parses.
 export function translateFilter(text, dicts) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = text.split(/\r?\n/);
-  const misses = [], modMisses = [];
   let touchedLines = 0, values = 0, translated = 0;
+  const dropped = [], commented = [];
 
   const out = lines.map((line) => {
     const m = VALUE_KEYWORDS.exec(line);
     if (!m) return line;
     const [, indent, keyword, op, rest] = m;
     const group = KEYWORD_GROUP[keyword.toLowerCase()];
+    const exact = /==/.test(op);
     const dict = dicts[group];
-    let changed = false;
+    let changed = false, kept = 0;
+
     const newRest = rest.replace(QUOTED, (whole, val) => {
       values++;
-      const pl = dict?.get(val);
-      if (pl) { translated++; changed = true; return `"${pl}"`; }
-      misses.push(val);
-      if (group === 'mod') modMisses.push(val);
-      return whole; // leave untranslated value verbatim
-    });
+      const pl = dict?.get(val) ?? val;            // in-game name (translated or as-is)
+      if (pl !== val) { translated++; changed = true; }
+      if (isMatchable(group, exact, pl, dicts)) { kept++; return `"${pl}"`; }
+      dropped.push(val); changed = true;
+      return '';                                   // unmatchable -> remove this value
+    }).replace(/[^\S\r\n]{2,}/g, ' ').replace(/[^\S\r\n]+$/, ''); // tidy gaps from removals
+
+    if (kept === 0) {
+      // No values survive -> the rule would error ("missing/!match"). Comment it.
+      commented.push(line.trim());
+      return `${indent}# [pl] removed (no in-game match): ${line.trim()}`;
+    }
     if (changed) touchedLines++;
     return `${indent}${keyword}${op}${newRest}`;
   });
@@ -98,7 +126,7 @@ export function translateFilter(text, dicts) {
     text: out.join(eol),
     stats: {
       lines: touchedLines, values, translated,
-      misses: [...new Set(misses)], modMisses: [...new Set(modMisses)],
+      dropped: [...new Set(dropped)], commented,
     },
   };
 }
@@ -120,13 +148,13 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   await fs.writeFile(dest, text, 'utf8');
   console.log(`Dictionary: ${dicts.item.size} item + ${dicts.mod.size} mod entries`);
   console.log(`Rewrote ${stats.translated}/${stats.values} values across ${stats.lines} lines -> ${dest}`);
-  if (stats.misses.length) {
-    console.log(`\n${stats.misses.length} value(s) had no Polish match (left English — usually partial/substring rules):`);
-    for (const v of stats.misses.slice(0, 40)) console.log('   ', JSON.stringify(v));
-    if (stats.misses.length > 40) console.log(`   … +${stats.misses.length - 40} more`);
+  if (stats.dropped.length) {
+    console.log(`\nDropped ${stats.dropped.length} value(s) that match nothing in-game (would otherwise fail the whole filter):`);
+    for (const v of stats.dropped.slice(0, 40)) console.log('   ', JSON.stringify(v));
+    if (stats.dropped.length > 40) console.log(`   … +${stats.dropped.length - 40} more`);
   }
-  if (stats.modMisses.length) {
-    console.log(`\nWARNING: ${stats.modMisses.length} mod-rule value(s) left English. If any is NOT a substring of a Polish affix, the game rejects the WHOLE filter ("No mods found matching …"). Review these:`);
-    for (const v of stats.modMisses) console.log('   ', JSON.stringify(v));
+  if (stats.commented.length) {
+    console.log(`\nCommented out ${stats.commented.length} rule line(s) left with no valid values (the block still loads):`);
+    for (const v of stats.commented.slice(0, 20)) console.log('   ', v);
   }
 }
