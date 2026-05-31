@@ -13,7 +13,8 @@ import * as path from 'path';
 import { loadSchema, ValidFor, POE2_LANG_PATH } from './schema.mjs';
 import { patchTable, readScalarStrings } from './datWriter.mjs';
 import { translateMany } from './translate.mjs';
-import { shouldTranslate } from './translatable.mjs';
+import { shouldTranslate, valueIsNonText } from './translatable.mjs';
+import { collectCsdStrings, patchCsd } from './csd.mjs';
 import { pullLatest } from './remote.mjs';
 import { makeLoader } from './loader.mjs';
 
@@ -28,6 +29,17 @@ const STAGE = path.join(import.meta.dirname, '..', 'out', 'staging', 'Data', 'Ba
 // from the live game (which we overwrite). Keeps re-runs idempotent: reading the
 // source from the locale we patch would otherwise feed our own Polish back in.
 const SRCBAK = path.join(import.meta.dirname, '..', 'out', 'source-en', 'Data', 'Balance');
+// Stat-description files (the blue stat lines on skill gems / passive nodes).
+// These live in NO .datc64 table — they're translated by src/csd.mjs and staged
+// under Data/StatDescriptions so ApplyPolish writes them into the same index.
+const CSD_DIR = 'Data/StatDescriptions';
+const CSD_FILES = [
+  'stat_descriptions.csd', 'skill_stat_descriptions.csd',
+  'active_skill_gem_stat_descriptions.csd', 'passive_skill_stat_descriptions.csd',
+  'map_stat_descriptions.csd', 'monster_stat_descriptions.csd',
+];
+const STAGE_CSD = path.join(import.meta.dirname, '..', 'out', 'staging', CSD_DIR);
+const SRCBAK_CSD = path.join(import.meta.dirname, '..', 'out', 'source-en', CSD_DIR);
 
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
@@ -38,26 +50,29 @@ const UPDATE = has('--update');   // pull latest translations from the GitHub re
 const LIMIT = val('--limit') ? Number(val('--limit')) : Infinity;
 const ONLY = val('--tables')?.split(',').map((s) => s.trim());
 
-// Resolve the PRISTINE English source for a table, immune to our own patching.
-// If the live file equals our last staged output, the game currently holds our
-// patch -> use the saved backup as source. Otherwise the live file is pristine
-// (first run, or freshly overwritten by a Steam update) -> refresh the backup.
-async function pristineSource(loader, name) {
-  const live = await loader.tryGetFileContents(`${SRC_PATH}/${name}.datc64`);
+// Resolve the PRISTINE English source for a bundled file, immune to our own
+// patching. If the live file equals our last staged output, the game currently
+// holds our patch -> use the saved backup as source. Otherwise the live file is
+// pristine (first run, or freshly overwritten by a Steam update) -> snapshot it.
+async function pristineFile(loader, gamePath, stagePath, bakPath) {
+  const live = await loader.tryGetFileContents(gamePath);
   if (!live) return null;
   const liveBuf = Buffer.from(live);
-  const bakPath = path.join(SRCBAK, `${name}.datc64`);
   let prevStage = null;
-  try { prevStage = await fs.readFile(path.join(STAGE, `${name}.datc64`)); } catch {}
+  try { prevStage = await fs.readFile(stagePath); } catch {}
   if (prevStage && prevStage.equals(liveBuf)) {
     // Live is our own patch -> the pristine English is in the backup.
     try { return { source: await fs.readFile(bakPath), live: liveBuf }; } catch { /* no backup */ }
   }
   // Live is pristine (first run / freshly Steam-updated) -> (re)snapshot it.
-  await fs.mkdir(SRCBAK, { recursive: true });
+  await fs.mkdir(path.dirname(bakPath), { recursive: true });
   await fs.writeFile(bakPath, liveBuf);
   return { source: liveBuf, live: liveBuf };
 }
+const pristineSource = (loader, name) => pristineFile(
+  loader, `${SRC_PATH}/${name}.datc64`,
+  path.join(STAGE, `${name}.datc64`), path.join(SRCBAK, `${name}.datc64`),
+);
 
 async function main() {
   if (UPDATE) {
@@ -110,8 +125,23 @@ async function main() {
     present.push({ name, source: ps.source, live: ps.live });
   }
 
+  // PASS 1b — stat-description (.csd) files: the blue skill/passive stat lines.
+  // Same pristine-source handling; default-block display strings join the global
+  // set so they share the cache and the link/markup protection in translate.mjs.
+  const csdPresent = []; // {file, source, live}
+  for (const f of CSD_FILES) {
+    const ps = await pristineFile(loader, `${CSD_DIR}/${f}`, path.join(STAGE_CSD, f), path.join(SRCBAK_CSD, f));
+    if (!ps) continue;
+    for (const s of collectCsdStrings(ps.source)) {
+      if (!s || valueIsNonText(s)) continue;
+      if (!sources.has(s)) { sources.add(s); chars += s.length; }
+    }
+    csdPresent.push({ file: f, source: ps.source, live: ps.live });
+  }
+
   console.log(`Candidate string tables:           ${candidates.length}`);
   console.log(`Readable tables:                    ${present.length}`);
+  console.log(`Stat-description (.csd) files:      ${csdPresent.length}`);
   console.log(`Unique source strings (deduped):    ${sources.size.toLocaleString()}`);
   console.log(`Total characters to translate:      ${chars.toLocaleString()}`);
 
@@ -150,6 +180,19 @@ async function main() {
     if (res.stats.changed === 0) restored++; // differed only because live was stale
   }
   console.log(`\nStaged ${written} .datc64 files (${fields.toLocaleString()} translated fields; ${restored} pure restores) to:\n  ${STAGE}`);
+
+  // PASS 2b — patch + stage the .csd files. valueIsNonText mirrors PASS 1b so we
+  // never feed a non-text display string to the (link/markup-aware) translator.
+  const csdTranslate = (s) => (valueIsNonText(s) ? null : map.get(s) ?? null);
+  let csdWritten = 0, csdLines = 0;
+  for (const { file, source, live } of csdPresent) {
+    const res = patchCsd(source, csdTranslate);
+    if (res.bytes.equals(live)) continue;
+    await fs.mkdir(STAGE_CSD, { recursive: true });
+    await fs.writeFile(path.join(STAGE_CSD, file), res.bytes);
+    csdWritten++; csdLines += res.stats.changed;
+  }
+  console.log(`Staged ${csdWritten} .csd files (${csdLines.toLocaleString()} stat lines) to:\n  ${STAGE_CSD}`);
   console.log('\nNext: apply with the C# tool (needs oo2core_9_win64.dll):');
   console.log('  ApplyPolish "<...>/Bundles2/_.index.bin"  out/staging');
 }

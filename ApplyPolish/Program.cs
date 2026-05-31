@@ -18,8 +18,12 @@ string stagingRoot = Path.GetFullPath(args[1]);
 if (!File.Exists(indexPath)) { Console.Error.WriteLine("Index not found: " + indexPath); return 1; }
 if (!Directory.Exists(stagingRoot)) { Console.Error.WriteLine("Staging not found: " + stagingRoot); return 1; }
 
-var staged = Directory.EnumerateFiles(stagingRoot, "*.datc64", SearchOption.AllDirectories).ToArray();
-if (staged.Length == 0) { Console.Error.WriteLine("No .datc64 files under " + stagingRoot); return 1; }
+// .datc64 = translated tables; .csd = stat-description files (skill/passive stat lines).
+var staged = Directory.EnumerateFiles(stagingRoot, "*.*", SearchOption.AllDirectories)
+    .Where(f => f.EndsWith(".datc64", StringComparison.OrdinalIgnoreCase)
+             || f.EndsWith(".csd", StringComparison.OrdinalIgnoreCase))
+    .ToArray();
+if (staged.Length == 0) { Console.Error.WriteLine("No .datc64/.csd files under " + stagingRoot); return 1; }
 
 Console.WriteLine($"Index:   {indexPath}");
 Console.WriteLine($"Staging: {stagingRoot}  ({staged.Length} files)");
