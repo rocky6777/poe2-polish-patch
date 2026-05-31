@@ -44,17 +44,23 @@ if (-not $Out) { $Out = [IO.Path]::ChangeExtension($In, $null).TrimEnd('.') + '.
 # -Encoding UTF8 is REQUIRED: Windows PowerShell 5.1 otherwise reads the file as
 # ANSI and corrupts the Polish letters, so the output would not match in-game.
 $json = Get-Content -Raw -Encoding UTF8 -LiteralPath $Dict | ConvertFrom-Json
+# Font workaround: the game font has no glyph for capital "Ł" (U+0141), so the
+# patch folds every in-game name to lowercase "ł" (U+0142). The filter must match
+# those names byte-for-byte, so we fold the SAME way on every Polish value we
+# compare against or emit (and on the input below). English keys have no "Ł", so
+# this is a no-op for them. Idempotent: re-running on a folded dict changes nothing.
+function Fold([string]$s) { if ($null -eq $s) { return $s }; return $s.Replace([char]0x0141, [char]0x0142) }
 function New-Map($pairs) {
   $m = [System.Collections.Generic.Dictionary[string,string]]::new([System.StringComparer]::Ordinal)
-  foreach ($p in $pairs) { $m[[string]$p[0]] = [string]$p[1] }
+  foreach ($p in $pairs) { $m[[string]$p[0]] = Fold([string]$p[1]) }
   return ,$m
 }
 $itemMap  = New-Map $json.item
 $modMap   = New-Map $json.mod
 $itemFrag = New-Map $json.itemFrag       # partial-rule fragment translations
-$baseNames = [string[]]$json.itemNames   # for substring (non-==) checks
+$baseNames = [string[]]@($json.itemNames | ForEach-Object { Fold $_ })   # for substring (non-==) checks
 $baseSet = [System.Collections.Generic.HashSet[string]]::new($baseNames, [System.StringComparer]::Ordinal)
-$modNames = [string[]]$json.modNames     # for substring checks
+$modNames = [string[]]@($json.modNames | ForEach-Object { Fold $_ })     # for substring checks
 
 $lines = Get-Content -Encoding UTF8 -LiteralPath $In
 $rxLine  = [regex]'^(\s*)(BaseType|Class|HasExplicitMod|HasImplicitMod|HasMod)(\s*(==|!=|<=|>=|=|<|>)?\s*)(.*)$'
@@ -72,7 +78,7 @@ function Test-ItemSubstr([string]$val) { foreach ($n in $baseNames) { if ($n.Con
 #   item (no=): substring of some name; try as-is, then full-name, then fragment.
 $evaluator = {
   param($q)
-  $v = $q.Groups[1].Value
+  $v = Fold($q.Groups[1].Value)   # fold to match the patch's lowercase-"ł" game names
   $out = $v; $ok = $false
   if ($script:curGroup -eq 'mod') {
     $cand = if ($modMap.ContainsKey($v)) { $modMap[$v] } else { $v }
