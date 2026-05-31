@@ -1,0 +1,25 @@
+# dependencies & caches (re-created locally)
+node_modules/
+.cache/
+
+# generated output (patched files, backups, staging, logs, the built zip)
+out/
+dist/
+export/
+
+# third-party source — clone separately (see README "Build from source")
+LibGGPK3/
+
+# the translations DATA repo is its own git repo
+translations-repo/
+
+# .NET build artifacts (also contains the proprietary Oodle dll)
+ApplyPolish/bin/
+ApplyPolish/obj/
+
+# PROPRIETARY — never publish the Oodle library
+oo2core*.dll
+
+# misc
+oo2core-search.txt
+*.log

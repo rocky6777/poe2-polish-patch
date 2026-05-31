@@ -1,0 +1,4 @@
+{
+  "_comment": "Edit USER/REPO below to YOUR translations repo, then it's baked into the package. The patcher fetches manifest.json + translations.pl.json.gz from this base URL on every run.",
+  "translationsBaseUrl": "https://raw.githubusercontent.com/rocky6777/poe2-polish-translations/main"
+}
