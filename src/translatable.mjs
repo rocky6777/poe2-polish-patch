@@ -23,7 +23,12 @@ export function looksLikeReference(s) {
 }
 
 // Columns that hold code/data, never display text (matched case-insensitively).
-const SKIP_COLUMN_RE = /script|^id$|path|filename|directory|reference|expression|command/i;
+// `script(?!ion)` skips genuine script columns (Script, Script1, ScriptArgs,
+// AiScript, …) while still translating *Description columns — "deScRiPTion"
+// contains the substring "script", and a bare `script` term silently skipped
+// every Description/ShortDescription/StatDescription column (all the skill,
+// buff and passive bonus text), leaving it untranslated in-game.
+const SKIP_COLUMN_RE = /script(?!ion)|^id$|path|filename|directory|reference|expression|command/i;
 
 // Executable game scripts (e.g. MonsterSpawners.Script1): method calls, statement
 // separators, blocks, and PoE script builtins. Translating these mangles object
