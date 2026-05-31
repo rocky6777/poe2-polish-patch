@@ -33,6 +33,7 @@ Copy-Item (Join-Path $root 'patcher.config.json')  $pkg   # repo URL for auto-up
 
 # Loot-filter localizer (pure PowerShell) + dictionary emitted by build.mjs.
 Copy-Item (Join-Path $root 'enduser\Translate-Filter.ps1') $pkg
+Copy-Item (Join-Path $root 'enduser\Translate-Filter.bat') $pkg
 $fdict = Join-Path $root 'out\filter-dict.pl.json'
 if (-not (Test-Path $fdict)) { throw "Missing $fdict — run ./rebuild.ps1 (build.mjs --run emits it)." }
 Copy-Item $fdict $pkg

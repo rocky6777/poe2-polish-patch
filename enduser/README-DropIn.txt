@@ -41,20 +41,27 @@ LOOT FILTERS  (important!)
 --------------------------------------------------------------------------
   Because the game now shows Polish item names, an ENGLISH loot filter no
   longer matches anything (the game compares your filter's BaseType / Class
-  text against the Polish names). Convert your filter to Polish first:
+  text against the Polish names). Convert your filter to Polish first.
 
-    1. Open PowerShell in the "LootFilter" folder of this package.
-    2. Run:
-         .\Translate-Filter.ps1 -In "C:\path\to\YourFilter.filter"
-       This writes "YourFilter.pl.filter" with the BaseType / Class values
-       translated to the exact Polish names the patch uses. Everything else
-       (colours, sounds, tiers) is unchanged.
-    3. Copy the .pl.filter into
-         Documents\My Games\Path of Exile 2\
-       and select it in-game (Options -> UI -> Item Filter).
+  EASIEST: drag your .filter file onto  LootFilter\Translate-Filter.bat
+  (the .bat handles PowerShell's "scripts are blocked" setting for you). It
+  writes "<YourFilter>.pl.filter" next to the original, with the BaseType /
+  Class values translated to the exact Polish names the patch uses;
+  everything else (colours, sounds, tiers) is unchanged.
 
-  Any filter values it couldn't translate (e.g. partial-name rules) are
-  listed at the end so you can tweak them by hand.
+  Then copy that .pl.filter into
+     Documents\My Games\Path of Exile 2\
+  and select it in-game (Options -> UI -> Item Filter).
+
+  (Command-line alternative, if you prefer:
+     powershell -ExecutionPolicy Bypass -File Translate-Filter.ps1 -In "YourFilter.filter"
+   Keep Translate-Filter.ps1 and filter-dict.pl.json together in the same
+   folder.)
+
+  Any values it couldn't translate are listed at the end. Most are harmless:
+  base types whose Polish IS the English word stay English in-game too, so
+  they still match. Only partial-name rules (e.g. a bare "Rune" meant to catch
+  every rune) may need a manual tweak.
 
 --------------------------------------------------------------------------
 HOW TO UNDO IT  (or if anything looks broken)

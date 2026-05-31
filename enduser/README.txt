@@ -38,13 +38,18 @@ LOOT FILTERS
 Item names are now Polish, so an English loot filter stops matching. Convert
 yours to Polish (no extra installs needed):
 
+   EASIEST: drag your .filter file onto  Translate-Filter.bat
+   (it handles PowerShell's "scripts are blocked" setting automatically).
+
+   Command line, if you prefer:
    powershell -ExecutionPolicy Bypass -File .\Translate-Filter.ps1 -In "C:\path\to\YourFilter.filter"
 
 It writes "YourFilter.pl.filter" with the BaseType / Class lines translated to
 the exact Polish names the patch uses; colours, sounds and tiers are unchanged.
 Put the .pl.filter in  Documents\My Games\Path of Exile 2\  and pick it in
-Options > UI > Item Filter. Values it can't translate (e.g. partial-name rules)
-are listed at the end so you can adjust them.
+Options > UI > Item Filter. Any values it can't translate are listed at the
+end; most are harmless (items that stay English in-game), only bare partial-
+name rules may need a manual tweak.
 
 ------------------------------------------------------------
 TROUBLESHOOTING

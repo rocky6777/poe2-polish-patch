@@ -48,7 +48,8 @@ $fdict = Join-Path $PSScriptRoot 'out\filter-dict.pl.json'
 if (Test-Path $fdict) {
   $fdir = Join-Path $pkg 'LootFilter'
   New-Item -ItemType Directory -Force $fdir | Out-Null
-  Copy-Item (Join-Path $PSScriptRoot 'enduser\Translate-Filter.ps1') $fdir
+  Copy-Item (Join-Path $PSScriptRoot 'enduser\Translate-Filter.ps1')  $fdir
+  Copy-Item (Join-Path $PSScriptRoot 'enduser\Translate-Filter.bat')  $fdir
   Copy-Item $fdict $fdir
 } else {
   Write-Warning "No $fdict — run ./build.mjs --run to emit it; skipping loot-filter tool."
