@@ -50,6 +50,29 @@ const UPDATE = has('--update');   // pull latest translations from the GitHub re
 const LIMIT = val('--limit') ? Number(val('--limit')) : Infinity;
 const ONLY = val('--tables')?.split(',').map((s) => s.trim());
 
+// Polish-specific letters never occur in PoE's English base text, so finding a
+// run of them means this "pristine" file is actually one of our own patches.
+// Snapshotting such a file as the source feeds Polish back in as "English" and
+// permanently breaks link keys ([Strength|Strength] -> [Siła|Siła]), so we hard
+// fail instead — the only clean recovery is restoring the originals.
+//
+// We require the Polish letter to sit INSIDE a Latin-letter run (a real word like
+// "Siła"/"więcej"): the binary fixed-row section of a .datc64 (offsets, ints)
+// decodes as UTF-16LE to stray code points that include isolated Polish-range
+// chars, which would false-positive a naive per-character count.
+function looksContaminated(buf) {
+  const s = Buffer.from(buf).toString('utf16le');
+  const re = /[A-Za-z]{2}[łąężźśćńŁĄĘŻŹŚĆŃ]|[łąężźśćńŁĄĘŻŹŚĆŃ][A-Za-z]{2}/g;
+  return (s.match(re) || []).length > 30;
+}
+function contamination(file) {
+  return new Error(
+    `Source looks like an already-applied Polish patch, not pristine English:\n  ${file}\n` +
+    `Restore the originals (Steam -> Path of Exile 2 -> Properties -> Installed Files ->\n` +
+    `"Verify integrity of game files"), delete out/source-en, then re-run.`,
+  );
+}
+
 // Resolve the PRISTINE English source for a bundled file, immune to our own
 // patching. If the live file equals our last staged output, the game currently
 // holds our patch -> use the saved backup as source. Otherwise the live file is
@@ -62,9 +85,15 @@ async function pristineFile(loader, gamePath, stagePath, bakPath) {
   try { prevStage = await fs.readFile(stagePath); } catch {}
   if (prevStage && prevStage.equals(liveBuf)) {
     // Live is our own patch -> the pristine English is in the backup.
-    try { return { source: await fs.readFile(bakPath), live: liveBuf }; } catch { /* no backup */ }
+    let bak;
+    try { bak = await fs.readFile(bakPath); } catch { bak = null; }
+    if (bak) {
+      if (looksContaminated(bak)) throw contamination(bakPath);
+      return { source: bak, live: liveBuf };
+    }
   }
   // Live is pristine (first run / freshly Steam-updated) -> (re)snapshot it.
+  if (looksContaminated(liveBuf)) throw contamination(gamePath);
   await fs.mkdir(path.dirname(bakPath), { recursive: true });
   await fs.writeFile(bakPath, liveBuf);
   return { source: liveBuf, live: liveBuf };
