@@ -15,12 +15,26 @@ const CACHE_FILE = path.join(import.meta.dirname, '..', '.cache', 'translations.
 
 // Markup we must never let the MT engine alter.
 const PROTECT_RE = /(\{[^}]*\}|<[^>]+>|%[0-9a-zA-Z_]*%|\r\n|\n|\r|\t)/g;
+// Game glossary links: [Key] or [Key|Display]. The Key (before the optional |)
+// is an internal token the engine matches VERBATIM to resolve the in-game
+// hyperlink/tooltip — translating it silently breaks the link (e.g.
+// [Dexterity|Dexterity] -> [Zręczność|Zręczność] no longer resolves). We keep
+// the "[Key|" prefix and the "]" suffix as protected tokens and expose only the
+// Display half — defaulting to the Key for a bare [Key] — to the MT engine, so
+// the visible term is translated while the link still resolves.
+const LINK_RE = /\[([^\]|]+)(?:\|([^\]]*))?\]/g;
 // Rare bracket chars survive Google MT far better than {curly} or [square].
 const open = '❲', close = '❳'; // ❲ ❳
 
 function protect(text) {
   const tokens = [];
-  const masked = text.replace(PROTECT_RE, (m) => `${open}${tokens.push(m) - 1}${close}`);
+  const mask = (m) => `${open}${tokens.push(m) - 1}${close}`;
+  // Links first: protect "[Key|" and "]", leaving the display text in the
+  // stream so it gets translated alongside the surrounding sentence.
+  let masked = text.replace(LINK_RE, (_, key, display) =>
+    `${mask(`[${key}|`)}${display ?? key}${mask(']')}`);
+  // Then the inline markup that must survive byte-for-byte.
+  masked = masked.replace(PROTECT_RE, mask);
   return { masked, tokens };
 }
 function restore(masked, tokens) {
@@ -30,7 +44,11 @@ function restore(masked, tokens) {
     (_, i) => tokens[Number(i)] ?? '',
   );
 }
-// True if every protected token appears exactly as many times as in the source.
+// Sorted multiset of link KEYS (the lookup half), which must never change.
+function linkKeys(s) {
+  return [...s.matchAll(LINK_RE)].map((m) => m[1]).sort();
+}
+// True if every protected token AND every link key survives 1:1 from src->out.
 function markupIntact(src, out) {
   const a = src.match(PROTECT_RE) ?? [];
   const b = out.match(PROTECT_RE) ?? [];
@@ -38,6 +56,9 @@ function markupIntact(src, out) {
   const count = (arr) => arr.reduce((m, x) => m.set(x, (m.get(x) || 0) + 1), new Map());
   const ca = count(a), cb = count(b);
   for (const [k, v] of ca) if (cb.get(k) !== v) return false;
+  const la = linkKeys(src), lb = linkKeys(out);
+  if (la.length !== lb.length) return false;
+  for (let i = 0; i < la.length; i++) if (la[i] !== lb[i]) return false;
   return true;
 }
 
