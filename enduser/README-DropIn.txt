@@ -45,9 +45,10 @@ LOOT FILTERS  (important!)
 
   EASIEST: drag your .filter file onto  LootFilter\Translate-Filter.bat
   (the .bat handles PowerShell's "scripts are blocked" setting for you). It
-  writes "<YourFilter>.pl.filter" next to the original, with the BaseType /
-  Class values translated to the exact Polish names the patch uses;
-  everything else (colours, sounds, tiers) is unchanged.
+  writes "<YourFilter>.pl.filter" next to the original, translating the
+  BaseType / Class values AND the HasExplicitMod affix names (e.g.
+  "Hellion's") to the exact Polish the patch uses; everything else (colours,
+  sounds, tiers) is unchanged.
 
   Then copy that .pl.filter into
      Documents\My Games\Path of Exile 2\
@@ -61,7 +62,9 @@ LOOT FILTERS  (important!)
   Any values it couldn't translate are listed at the end. Most are harmless:
   base types whose Polish IS the English word stay English in-game too, so
   they still match. Only partial-name rules (e.g. a bare "Rune" meant to catch
-  every rune) may need a manual tweak.
+  every rune) may need a manual tweak. If it prints a red MOD-rule WARNING,
+  read it: an untranslated full affix name on a HasExplicitMod line can make
+  the game reject the whole filter, so fix those before using the filter.
 
 --------------------------------------------------------------------------
 HOW TO UNDO IT  (or if anything looks broken)

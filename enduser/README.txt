@@ -44,12 +44,14 @@ yours to Polish (no extra installs needed):
    Command line, if you prefer:
    powershell -ExecutionPolicy Bypass -File .\Translate-Filter.ps1 -In "C:\path\to\YourFilter.filter"
 
-It writes "YourFilter.pl.filter" with the BaseType / Class lines translated to
-the exact Polish names the patch uses; colours, sounds and tiers are unchanged.
-Put the .pl.filter in  Documents\My Games\Path of Exile 2\  and pick it in
-Options > UI > Item Filter. Any values it can't translate are listed at the
-end; most are harmless (items that stay English in-game), only bare partial-
-name rules may need a manual tweak.
+It writes "YourFilter.pl.filter" with the BaseType / Class lines AND
+HasExplicitMod affix names translated to the exact Polish the patch uses;
+colours, sounds and tiers are unchanged. Put the .pl.filter in
+Documents\My Games\Path of Exile 2\  and pick it in Options > UI > Item Filter.
+Any values it can't translate are listed at the end; most are harmless (items
+that stay English in-game), only bare partial-name rules may need a tweak. Heed
+any red MOD-rule WARNING: an untranslated affix name can make the game reject
+the whole filter.
 
 ------------------------------------------------------------
 TROUBLESHOOTING
