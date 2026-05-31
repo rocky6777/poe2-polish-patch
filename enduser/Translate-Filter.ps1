@@ -49,10 +49,12 @@ function New-Map($pairs) {
   foreach ($p in $pairs) { $m[[string]$p[0]] = [string]$p[1] }
   return ,$m
 }
-$itemMap = New-Map $json.item
-$modMap  = New-Map $json.mod
-$baseSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$json.itemNames, [System.StringComparer]::Ordinal)
-$modNames = [string[]]$json.modNames   # for substring checks
+$itemMap  = New-Map $json.item
+$modMap   = New-Map $json.mod
+$itemFrag = New-Map $json.itemFrag       # partial-rule fragment translations
+$baseNames = [string[]]$json.itemNames   # for substring (non-==) checks
+$baseSet = [System.Collections.Generic.HashSet[string]]::new($baseNames, [System.StringComparer]::Ordinal)
+$modNames = [string[]]$json.modNames     # for substring checks
 
 $lines = Get-Content -Encoding UTF8 -LiteralPath $In
 $rxLine  = [regex]'^(\s*)(BaseType|Class|HasExplicitMod|HasImplicitMod|HasMod)(\s*(==|!=|<=|>=|=|<|>)?\s*)(.*)$'
@@ -60,20 +62,32 @@ $rxQuote = [regex]'"([^"]*)"'
 $translated = 0; $touched = 0
 $dropped   = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
 $commented = 0
-$script:curMap = $null; $script:curGroup = ''; $script:curExact = $false; $script:kept = 0
+$script:curGroup = ''; $script:curExact = $false; $script:kept = 0
 
-function Test-Matchable([string]$group, [bool]$exact, [string]$val) {
-  if ($group -eq 'mod') { foreach ($n in $modNames) { if ($n.Contains($val)) { return $true } } ; return $false }
-  if ($exact) { return $baseSet.Contains($val) }
-  return $true
-}
+function Test-ItemSubstr([string]$val) { foreach ($n in $baseNames) { if ($n.Contains($val)) { return $true } } ; return $false }
 
+# Resolve a value to the in-game form, or mark it unmatchable. The game fails the
+# WHOLE filter on ANY value matching nothing, partial (non-==) rules included.
+#   item ==   : exact base/class name      mod : substring of some mod name
+#   item (no=): substring of some name; try as-is, then full-name, then fragment.
 $evaluator = {
   param($q)
   $v = $q.Groups[1].Value
-  $pl = if ($script:curMap.ContainsKey($v)) { $script:curMap[$v] } else { $v }
-  if ($pl -ne $v) { $script:translated++ }
-  if (Test-Matchable $script:curGroup $script:curExact $pl) { $script:kept++; '"' + $pl + '"' }
+  $out = $v; $ok = $false
+  if ($script:curGroup -eq 'mod') {
+    $cand = if ($modMap.ContainsKey($v)) { $modMap[$v] } else { $v }
+    foreach ($n in $modNames) { if ($n.Contains($cand)) { $ok = $true; break } }
+    $out = $cand
+  } elseif ($script:curExact) {
+    $cand = if ($itemMap.ContainsKey($v)) { $itemMap[$v] } else { $v }
+    $ok = $baseSet.Contains($cand); $out = $cand
+  } elseif (Test-ItemSubstr $v) {
+    $ok = $true; $out = $v
+  } else {
+    $cand = if ($itemMap.ContainsKey($v)) { $itemMap[$v] } elseif ($itemFrag.ContainsKey($v)) { $itemFrag[$v] } else { $null }
+    if ($cand -and (Test-ItemSubstr $cand)) { $ok = $true; $out = $cand }
+  }
+  if ($ok) { if ($out -ne $v) { $script:translated++ }; $script:kept++; '"' + $out + '"' }
   else { [void]$dropped.Add($v); '' }
 }
 
@@ -84,7 +98,6 @@ $result = foreach ($line in $lines) {
   $op = $m.Groups[3].Value;     $rest = $m.Groups[5].Value
   $script:curExact = ($m.Groups[4].Value -eq '==')
   $script:curGroup = if ($kw.ToLowerInvariant().StartsWith('has')) { 'mod' } else { 'item' }
-  $script:curMap   = if ($script:curGroup -eq 'mod') { $modMap } else { $itemMap }
   $script:kept = 0
   $before = $script:translated
   $newRest = $rxQuote.Replace($rest, $evaluator)
@@ -101,7 +114,7 @@ $result = foreach ($line in $lines) {
 # Preserve a UTF-8 file (PoE reads UTF-8 filters); avoid a BOM.
 [IO.File]::WriteAllLines($Out, $result, (New-Object Text.UTF8Encoding($false)))
 
-Write-Host "Dictionary entries : $($itemMap.Count) item + $($modMap.Count) mod  |  names: $($baseSet.Count) base/class + $($modNames.Count) mod"
+Write-Host "Dictionary entries : $($itemMap.Count) item + $($modMap.Count) mod + $($itemFrag.Count) fragment  |  names: $($baseSet.Count) base/class + $($modNames.Count) mod"
 Write-Host "Rewrote            : $translated value(s) on $touched line(s)"
 Write-Host "Output             : $Out" -ForegroundColor Green
 if ($dropped.Count) {

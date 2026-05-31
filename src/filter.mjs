@@ -41,15 +41,19 @@ const inGameValue = (cache, col, table, en) =>
   (shouldTranslate(col, en, table) && cache[en]) ? cache[en] : en;
 
 // Build, from the pristine English tables + the translation cache:
-//   item / mod : en->pl Maps of CHANGED entries (for rewriting filter values)
-//   itemNames  : the full SET of valid in-game base/class names (for == validation)
-//   modNames   : the full LIST of valid in-game mod names (for substring validation)
+//   item / mod : en->pl Maps of CHANGED full names (for rewriting filter values)
+//   itemFrag   : en->pl Map for PARTIAL base-type rules — n-gram fragments of base
+//                names (e.g. "Essence" -> "Esencja") whose translation still
+//                substring-matches a Polish base, so `BaseType "Essence"` keeps working
+//   itemNames  : full SET of valid in-game base/class names (for == validation)
+//   modNames   : full LIST of valid in-game mod names (for substring validation)
 // The name sets are what the game actually holds, so we can drop any filter value
 // that matches nothing — those otherwise make the WHOLE filter fail to load
 // ("No base types found exactly matching ..." / "No mods found matching ...").
 export async function buildFilterDict({ srcBalanceDir, cache, schema } = {}) {
   schema ??= await loadSchema();
   const out = { itemNames: new Set(), modNames: new Set() };
+  const enItemNames = [];
   for (const [group, tables] of Object.entries(DICT_TABLES)) {
     const dict = new Map();
     const nameSet = group === 'item' ? out.itemNames : out.modNames;
@@ -62,12 +66,33 @@ export async function buildFilterDict({ srcBalanceDir, cache, schema } = {}) {
         if (!en) continue;
         const ig = inGameValue(cache, col, table, en);
         nameSet.add(ig);
+        if (group === 'item') enItemNames.push(en);
         if (!dict.has(en) && ig !== en) dict.set(en, ig); // changed -> translation entry
       }
     }
     out[group] = dict;
   }
   out.modNames = [...out.modNames]; // list, for substring scans
+
+  // Fragment dict for partial (non-==) BaseType/Class rules: 1..3-word n-grams of
+  // base names, translated via the general cache, kept only when the Polish form
+  // still appears inside some in-game base name. >=3 chars avoids noise words.
+  const itemNamesArr = [...out.itemNames];
+  const frag = new Map();
+  const seen = new Set();
+  for (const en of enItemNames) {
+    const w = en.split(/\s+/);
+    for (let i = 0; i < w.length; i++) {
+      for (let n = 1; n <= 3 && i + n <= w.length; n++) {
+        const g = w.slice(i, i + n).join(' ');
+        if (g.length < 3 || seen.has(g)) continue;
+        seen.add(g);
+        const pl = cache[g];
+        if (pl && pl !== g && !out.item.has(g) && itemNamesArr.some((nm) => nm.includes(pl))) frag.set(g, pl);
+      }
+    }
+  }
+  out.itemFrag = frag;
   return out;
 }
 
@@ -76,13 +101,28 @@ export async function buildFilterDict({ srcBalanceDir, cache, schema } = {}) {
 const VALUE_KEYWORDS = /^(\s*)(BaseType|Class|HasExplicitMod|HasImplicitMod|HasMod)(\b[^\S\r\n]*(?:==|!=|<=|>=|=|<|>)?[^\S\r\n]*)(.*)$/;
 const QUOTED = /"([^"]*)"/g;
 
-// Is a value matchable in-game? item == rules need an exact base/class name;
-// mod rules (always substring) need the value to be a substring of some mod name.
-// Non-exact item rules are partial matches that never hard-fail, so anything goes.
-function isMatchable(group, exact, val, dicts) {
-  if (group === 'mod') return dicts.modNames.some((n) => n.includes(val));
-  if (exact) return dicts.itemNames.has(val);
-  return true;
+// Resolve a quoted filter value to the form that matches in-game, or report it as
+// unmatchable. The game fails the WHOLE filter on ANY value matching nothing —
+// partial (non-==) rules included — so unmatchable values must be dropped.
+//   item ==   : must EXACTLY equal a base/class name (translate full name)
+//   item (no =): substring of some base/class name; try as-is, then full-name,
+//                then a fragment translation ("Essence" -> "Esencja")
+//   mod        : substring of some mod name (translate full affix)
+// Returns { out, ok }: out is the value to emit, ok=false means drop it.
+function resolveValue(group, exact, val, dicts) {
+  if (group === 'mod') {
+    const cand = dicts.mod.get(val) ?? val;
+    return { out: cand, ok: dicts.modNames.some((n) => n.includes(cand)) };
+  }
+  if (exact) {
+    const cand = dicts.item.get(val) ?? val;
+    return { out: cand, ok: dicts.itemNames.has(cand) };
+  }
+  // non-exact item: prefer the value that already matches.
+  for (const n of dicts.itemNames) if (n.includes(val)) return { out: val, ok: true };
+  const cand = dicts.item.get(val) ?? dicts.itemFrag.get(val);
+  if (cand) for (const n of dicts.itemNames) if (n.includes(cand)) return { out: cand, ok: true };
+  return { out: val, ok: false };
 }
 
 // Translate one filter into Polish AND make it load cleanly: each BaseType /
@@ -101,16 +141,15 @@ export function translateFilter(text, dicts) {
     const [, indent, keyword, op, rest] = m;
     const group = KEYWORD_GROUP[keyword.toLowerCase()];
     const exact = /==/.test(op);
-    const dict = dicts[group];
     let changed = false, kept = 0;
 
     const newRest = rest.replace(QUOTED, (whole, val) => {
       values++;
-      const pl = dict?.get(val) ?? val;            // in-game name (translated or as-is)
+      const { out: pl, ok } = resolveValue(group, exact, val, dicts);
+      if (!ok) { dropped.push(val); changed = true; return ''; } // unmatchable -> remove
       if (pl !== val) { translated++; changed = true; }
-      if (isMatchable(group, exact, pl, dicts)) { kept++; return `"${pl}"`; }
-      dropped.push(val); changed = true;
-      return '';                                   // unmatchable -> remove this value
+      kept++;
+      return `"${pl}"`;
     }).replace(/[^\S\r\n]{2,}/g, ' ').replace(/[^\S\r\n]+$/, ''); // tidy gaps from removals
 
     if (kept === 0) {
@@ -146,7 +185,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   const { text, stats } = translateFilter(src, dicts);
   const dest = output || input.replace(/(\.filter)?$/i, '.pl.filter');
   await fs.writeFile(dest, text, 'utf8');
-  console.log(`Dictionary: ${dicts.item.size} item + ${dicts.mod.size} mod entries`);
+  console.log(`Dictionary: ${dicts.item.size} item + ${dicts.mod.size} mod + ${dicts.itemFrag.size} fragment entries`);
   console.log(`Rewrote ${stats.translated}/${stats.values} values across ${stats.lines} lines -> ${dest}`);
   if (stats.dropped.length) {
     console.log(`\nDropped ${stats.dropped.length} value(s) that match nothing in-game (would otherwise fail the whole filter):`);
