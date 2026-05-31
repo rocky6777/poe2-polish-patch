@@ -147,7 +147,7 @@ async function main() {
     catch { continue; } // unreadable/incomplete schema -> skip safely
     for (const [col, values] of Object.entries(cols)) {
       for (const s of values) {
-        if (!shouldTranslate(col, s)) continue;
+        if (!shouldTranslate(col, s, name)) continue;
         if (!sources.has(s)) { sources.add(s); chars += s.length; }
       }
     }
@@ -196,7 +196,7 @@ async function main() {
   process.stdout.write('\n');
 
   await fs.mkdir(STAGE, { recursive: true });
-  const translate = (s, ctx) => (shouldTranslate(ctx.column, s) ? map.get(s) ?? null : null);
+  const translate = (s, ctx) => (shouldTranslate(ctx.column, s, ctx.table) ? map.get(s) ?? null : null);
   let written = 0, restored = 0, fields = 0;
   for (const { name, source, live } of present) {
     const res = patchTable(source, name, schema, ValidFor.PoE2, translate);

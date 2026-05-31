@@ -5,6 +5,18 @@
 //   - [DNT]-marked and empty strings
 const SKIP_COLUMNS = new Set(['Id']);
 
+// Columns whose string is an ENGINE OBJECT-CLASS IDENTIFIER, not display text.
+// The Characters table's Name/BaseClass double as the class registered for player
+// characters AND for rogue-exile monsters: Metadata/Monsters/RogueExiles/StrDex/
+// ExileMercenary1 declares its class as "Mercenary" (= Characters.Name). Translating
+// it ("Mercenary" -> "Najemnik") deregisters the class, so the monster crashes the
+// client on spawn ("Invalid class: Mercenary"). Keyed by "Table.Column" because the
+// same words are legitimate DISPLAY text in other tables (AchievementItems.Name,
+// NPCPortraits.Name) which we still want translated.
+const SKIP_TABLE_COLUMNS = new Set([
+  'Characters.Name', 'Characters.BaseClass',
+]);
+
 // Asset/extension references that appear as string fields but are not text.
 // Trailing \s* tolerates a stray trailing space (some video URLs have one).
 const ASSET_EXT = /\.(dds|ao|aoc|aco|epk|otc|tgt|amd|fmt|mat|sm|smd|tsi|tdt|dgr|ddt|gft|env|ecf|atlas|json|txt|csd|mtd|arm|cht|red|clt|otr|tmd|fxgraph|pet|mtp|srt|bk2|ogg|wav|mp3|avi|act|trl|psg|hlsl)\s*$/i;
@@ -51,9 +63,10 @@ export function looksLikeIdentifier(s) {
   return IDENTIFIER_RE.test(s);
 }
 
-export function shouldTranslate(column, value) {
+export function shouldTranslate(column, value, table) {
   if (!value) return false;
   if (value.startsWith('[DNT]')) return false;
+  if (table && SKIP_TABLE_COLUMNS.has(`${table}.${column}`)) return false;
   if (SKIP_COLUMNS.has(column)) return false;
   if (SKIP_COLUMN_RE.test(column)) return false;
   if (looksLikeReference(value)) return false;
