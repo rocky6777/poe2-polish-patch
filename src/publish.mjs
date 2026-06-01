@@ -7,14 +7,25 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as zlib from 'zlib';
 import { promisify } from 'util';
+import { cacheEntryHealthy } from './translate.mjs';
 
 const gzip = promisify(zlib.gzip);
 const ROOT = path.join(import.meta.dirname, '..');
 const CACHE = path.join(ROOT, '.cache', 'translations.pl.json');
 const REPO = path.join(ROOT, 'translations-repo');
 
-const json = await fs.readFile(CACHE, 'utf-8');
-const count = Object.keys(JSON.parse(json)).length;
+// Never ship link-breaking / contaminated entries to players, even if publish is
+// run without a rebuild first. Same rule translate.mjs self-heals with; we also
+// rewrite the on-disk cache so it stays clean.
+const raw = JSON.parse(await fs.readFile(CACHE, 'utf-8'));
+const cleaned = Object.fromEntries(Object.entries(raw).filter(([s, v]) => cacheEntryHealthy(s, v)));
+const dropped = Object.keys(raw).length - Object.keys(cleaned).length;
+if (dropped) {
+  console.warn(`Purged ${dropped.toLocaleString()} broken/contaminated cache entries before publishing.`);
+  await fs.writeFile(CACHE, JSON.stringify(cleaned));
+}
+const json = JSON.stringify(cleaned);
+const count = Object.keys(cleaned).length;
 await fs.mkdir(REPO, { recursive: true });
 
 // bump version

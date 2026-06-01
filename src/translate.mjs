@@ -61,10 +61,33 @@ function markupIntact(src, out) {
   for (let i = 0; i < la.length; i++) if (la[i] !== lb[i]) return false;
   return true;
 }
+// Polish-specific letters never occur in PoE's pristine English base text, so a
+// link KEY that contains one means a Polish-patched string was once re-ingested
+// as a "source" (contamination). Same letter set as build.mjs looksContaminated().
+const PL_IN_KEY = /[łąężźśćńŁĄĘŻŹŚĆŃ]/;
+function sourceContaminated(src) {
+  return [...src.matchAll(LINK_RE)].some((m) => PL_IN_KEY.test(m[1]));
+}
+// A cached translation is HEALTHY iff it preserved every placeholder + link key
+// (markupIntact) AND its source is genuine English. Unhealthy entries break
+// in-game glossary links — a legacy [Evasion|Evasion Rating] -> [Unik|Ocena uniku]
+// has a "Unik" key that resolves to nothing, so the client prints the raw
+// "[Unik|Ocena uniku]" markup. These predate the markupIntact link-key check, so
+// loadCache() drops them on every load: the next run re-translates them correctly
+// (keys stay English) and never re-serves or re-ships the poison. Exported so the
+// standalone scan (src/clean-cache.mjs) and publish.mjs apply the identical rule.
+export function cacheEntryHealthy(src, val) {
+  return typeof val === 'string' && markupIntact(src, val) && !sourceContaminated(src);
+}
 
 async function loadCache() {
-  try { return new Map(Object.entries(JSON.parse(await fs.readFile(CACHE_FILE, 'utf-8')))); }
-  catch { return new Map(); }
+  try {
+    const all = Object.entries(JSON.parse(await fs.readFile(CACHE_FILE, 'utf-8')));
+    const good = all.filter(([s, v]) => cacheEntryHealthy(s, v));
+    const dropped = all.length - good.length;
+    if (dropped) console.warn(`  cache: dropped ${dropped.toLocaleString()} broken/contaminated entr${dropped === 1 ? 'y' : 'ies'} (will re-translate)`);
+    return new Map(good);
+  } catch { return new Map(); }
 }
 async function saveCache(cache) {
   await fs.mkdir(path.dirname(CACHE_FILE), { recursive: true });

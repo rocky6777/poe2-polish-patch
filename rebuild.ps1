@@ -29,6 +29,13 @@ if (-not (Test-Path $exe)) {
   if ($LASTEXITCODE) { throw 'dotnet build failed' }
 }
 
+# 1b) Scan the cache and purge link-breaking / contaminated entries up front, so
+#     this run re-translates them correctly (glossary-link keys stay English).
+#     translate.mjs self-heals on load too; this just makes the fix visible.
+Write-Host '== Scanning cache for bad translations (clean-cache.mjs) ==' -ForegroundColor Cyan
+node (Join-Path $root 'src\clean-cache.mjs')
+if ($LASTEXITCODE) { throw 'clean-cache.mjs failed' }
+
 # 2) Translate + write staging .datc64 (resumable; cache in .cache\translations.pl.json).
 Write-Host '== Translating + staging (node build.mjs --run) ==' -ForegroundColor Cyan
 $env:POE2_DIR = $Poe2Dir
