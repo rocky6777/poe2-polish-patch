@@ -58,6 +58,7 @@ function New-Map($pairs) {
 $itemMap  = New-Map $json.item
 $modMap   = New-Map $json.mod
 $itemFrag = New-Map $json.itemFrag       # partial-rule fragment translations
+$itemAll  = New-Map $json.itemAll        # ALL base/class names (en->pl), for substring-rule expansion
 $baseNames = [string[]]@($json.itemNames | ForEach-Object { Fold $_ })   # for substring (non-==) checks
 $baseSet = [System.Collections.Generic.HashSet[string]]::new($baseNames, [System.StringComparer]::Ordinal)
 $modNames = [string[]]@($json.modNames | ForEach-Object { Fold $_ })     # for substring checks
@@ -65,7 +66,7 @@ $modNames = [string[]]@($json.modNames | ForEach-Object { Fold $_ })     # for s
 $lines = Get-Content -Encoding UTF8 -LiteralPath $In
 $rxLine  = [regex]'^(\s*)(BaseType|Class|HasExplicitMod|HasImplicitMod|HasMod)(\s*(==|!=|<=|>=|=|<|>)?\s*)(.*)$'
 $rxQuote = [regex]'"([^"]*)"'
-$translated = 0; $touched = 0
+$translated = 0; $touched = 0; $expanded = 0
 $dropped   = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
 $commented = 0
 $script:curGroup = ''; $script:curExact = $false; $script:kept = 0
@@ -79,22 +80,35 @@ function Test-ItemSubstr([string]$val) { foreach ($n in $baseNames) { if ($n.Con
 $evaluator = {
   param($q)
   $v = Fold($q.Groups[1].Value)   # fold to match the patch's lowercase-"ł" game names
-  $out = $v; $ok = $false
+  $outs = $null                   # in-game name(s) to emit; null/empty => drop
   if ($script:curGroup -eq 'mod') {
     $cand = if ($modMap.ContainsKey($v)) { $modMap[$v] } else { $v }
-    foreach ($n in $modNames) { if ($n.Contains($cand)) { $ok = $true; break } }
-    $out = $cand
+    foreach ($n in $modNames) { if ($n.Contains($cand)) { $outs = @($cand); break } }
   } elseif ($script:curExact) {
     $cand = if ($itemMap.ContainsKey($v)) { $itemMap[$v] } else { $v }
-    $ok = $baseSet.Contains($cand); $out = $cand
+    if ($baseSet.Contains($cand)) { $outs = @($cand) }
   } elseif (Test-ItemSubstr $v) {
-    $ok = $true; $out = $v
+    $outs = @($v)                 # already a substring of some Polish name
   } else {
-    $cand = if ($itemMap.ContainsKey($v)) { $itemMap[$v] } elseif ($itemFrag.ContainsKey($v)) { $itemFrag[$v] } else { $null }
-    if ($cand -and (Test-ItemSubstr $cand)) { $ok = $true; $out = $cand }
+    # EXPAND: every in-game name whose ENGLISH source contains the fragment. MT
+    # renders base nouns inconsistently, so no single Polish substring matches them
+    # all; listing the actual bases is faithful to the original English-substring rule.
+    $exp = [System.Collections.Generic.List[string]]::new()
+    $seenPl = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($en in $itemAll.Keys) { if ($en.Contains($v)) { $pl = $itemAll[$en]; if ($seenPl.Add($pl)) { [void]$exp.Add($pl) } } }
+    if ($exp.Count) { $outs = $exp; if ($exp.Count -gt 1) { $script:expanded++ } }
+    else {
+      $cand = if ($itemMap.ContainsKey($v)) { $itemMap[$v] } elseif ($itemFrag.ContainsKey($v)) { $itemFrag[$v] } else { $null }
+      if ($cand -and (Test-ItemSubstr $cand)) { $outs = @($cand) }
+    }
   }
-  if ($ok) { if ($out -ne $v) { $script:translated++ }; $script:kept++; '"' + $out + '"' }
-  else { [void]$dropped.Add($v); '' }
+  if ($outs -and $outs.Count) {
+    $emit = [System.Collections.Generic.List[string]]::new()
+    foreach ($o in $outs) { if ($script:seenLine.Add($o)) { [void]$emit.Add('"' + $o + '"') } }
+    if ($outs.Count -eq 1 -and $outs[0] -ne $v) { $script:translated++ }
+    $script:kept += $emit.Count
+    return ($emit -join ' ')
+  } else { [void]$dropped.Add($v); return '' }
 }
 
 $result = foreach ($line in $lines) {
@@ -105,14 +119,15 @@ $result = foreach ($line in $lines) {
   $script:curExact = ($m.Groups[4].Value -eq '==')
   $script:curGroup = if ($kw.ToLowerInvariant().StartsWith('has')) { 'mod' } else { 'item' }
   $script:kept = 0
-  $before = $script:translated
+  $script:seenLine = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+  $before = $script:translated; $beforeExp = $script:expanded
   $newRest = $rxQuote.Replace($rest, $evaluator)
   $newRest = ($newRest -replace '  +', ' ') -replace '\s+$', ''
   if ($script:kept -eq 0) {
     $commented++
     "$indent# [pl] removed (no in-game match): $($line.Trim())"
   } else {
-    if ($script:translated -ne $before) { $script:touched++ }
+    if ($script:translated -ne $before -or $script:expanded -ne $beforeExp) { $script:touched++ }
     "$indent$kw$op$newRest"
   }
 }
@@ -121,7 +136,7 @@ $result = foreach ($line in $lines) {
 [IO.File]::WriteAllLines($Out, $result, (New-Object Text.UTF8Encoding($false)))
 
 Write-Host "Dictionary entries : $($itemMap.Count) item + $($modMap.Count) mod + $($itemFrag.Count) fragment  |  names: $($baseSet.Count) base/class + $($modNames.Count) mod"
-Write-Host "Rewrote            : $translated value(s) on $touched line(s)"
+Write-Host "Rewrote            : $translated value(s) + expanded $expanded partial rule(s) on $touched line(s)"
 Write-Host "Output             : $Out" -ForegroundColor Green
 if ($dropped.Count) {
   Write-Host "`nDropped $($dropped.Count) value(s) that match nothing in-game (they would otherwise fail the whole filter):" -ForegroundColor Yellow

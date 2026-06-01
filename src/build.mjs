@@ -263,7 +263,7 @@ async function main() {
   const fdictPath = path.join(import.meta.dirname, '..', 'out', 'filter-dict.pl.json');
   await fs.writeFile(fdictPath, JSON.stringify({
     item: [...fdict.item.entries()], mod: [...fdict.mod.entries()],
-    itemFrag: [...fdict.itemFrag.entries()],
+    itemFrag: [...fdict.itemFrag.entries()], itemAll: [...fdict.itemAll.entries()],
     itemNames: [...fdict.itemNames], modNames: fdict.modNames,
   }));
   console.log(`Wrote loot-filter dictionary (${fdict.item.size.toLocaleString()} item + ${fdict.mod.size.toLocaleString()} mod + ${fdict.itemFrag.size.toLocaleString()} fragment entries; ${fdict.itemNames.size.toLocaleString()} base/class + ${fdict.modNames.length.toLocaleString()} mod names) to:\n  ${fdictPath}`);
