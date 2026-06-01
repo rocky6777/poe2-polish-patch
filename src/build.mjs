@@ -234,10 +234,16 @@ async function main() {
   for (const { name, source, live } of present) {
     const res = patchTable(source, name, schema, ValidFor.PoE2, translate);
     if (!res) continue;
+    const outPath = path.join(STAGE, `${name}.datc64`);
     // Stage whenever the desired bytes differ from what's live: covers new
     // translations AND restoring a table whose live copy is stale/corrupted.
-    if (res.bytes.equals(live)) continue;
-    await fs.writeFile(path.join(STAGE, `${name}.datc64`), res.bytes);
+    // If they MATCH, the table needs no patch — but DELETE any stale staging file so
+    // ApplyPolish can't re-apply an outdated translation. Without this, a table whose
+    // only translatable column became kept-English (BaseItemTypes/Mods/Words) keeps
+    // its old Polish staging — desired == pristine == live, so the write is skipped —
+    // and that stale file gets applied, putting Polish names back in-game.
+    if (res.bytes.equals(live)) { await fs.rm(outPath, { force: true }); continue; }
+    await fs.writeFile(outPath, res.bytes);
     written++; fields += res.stats.changed;
     if (res.stats.changed === 0) restored++; // differed only because live was stale
   }
@@ -249,9 +255,10 @@ async function main() {
   let csdWritten = 0, csdLines = 0;
   for (const { file, source, live } of csdPresent) {
     const res = patchCsd(source, csdTranslate);
-    if (res.bytes.equals(live)) continue;
+    const outPath = path.join(STAGE_CSD, file);
+    if (res.bytes.equals(live)) { await fs.rm(outPath, { force: true }); continue; } // drop stale (see datc64 loop)
     await fs.mkdir(STAGE_CSD, { recursive: true });
-    await fs.writeFile(path.join(STAGE_CSD, file), res.bytes);
+    await fs.writeFile(outPath, res.bytes);
     csdWritten++; csdLines += res.stats.changed;
   }
   console.log(`Staged ${csdWritten} .csd files (${csdLines.toLocaleString()} stat lines) to:\n  ${STAGE_CSD}`);
