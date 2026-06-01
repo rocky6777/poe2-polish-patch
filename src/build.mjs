@@ -264,9 +264,9 @@ async function main() {
   await fs.writeFile(fdictPath, JSON.stringify({
     item: [...fdict.item.entries()], mod: [...fdict.mod.entries()],
     itemFrag: [...fdict.itemFrag.entries()], itemAll: [...fdict.itemAll.entries()],
-    itemNames: [...fdict.itemNames], modNames: fdict.modNames,
+    baseNames: [...fdict.baseNames], classNames: [...fdict.classNames], modNames: fdict.modNames,
   }));
-  console.log(`Wrote loot-filter dictionary (${fdict.item.size.toLocaleString()} item + ${fdict.mod.size.toLocaleString()} mod + ${fdict.itemFrag.size.toLocaleString()} fragment entries; ${fdict.itemNames.size.toLocaleString()} base/class + ${fdict.modNames.length.toLocaleString()} mod names) to:\n  ${fdictPath}`);
+  console.log(`Wrote loot-filter dictionary (${fdict.item.size.toLocaleString()} item + ${fdict.mod.size.toLocaleString()} mod + ${fdict.itemFrag.size.toLocaleString()} fragment entries; ${fdict.baseNames.size.toLocaleString()} base + ${fdict.classNames.size.toLocaleString()} class + ${fdict.modNames.length.toLocaleString()} mod names) to:\n  ${fdictPath}`);
 
   console.log('\nNext: apply with the C# tool (needs oo2core_9_win64.dll):');
   console.log('  ApplyPolish "<...>/Bundles2/_.index.bin"  out/staging');

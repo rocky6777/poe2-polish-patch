@@ -30,9 +30,11 @@ const DICT_TABLES = {
   item: [['BaseItemTypes', 'Name'], ['ItemClasses', 'Name']],
   mod: [['Mods', 'Name']],
 };
-// filter keyword (lower-cased) -> which dictionary its quoted values use.
+// filter keyword (lower-cased) -> which match space its quoted values use. base and
+// class are SEPARATE spaces (BaseType matches only base-type names, Class only class
+// names), so they must not be conflated — see buildFilterDict / resolveValue.
 const KEYWORD_GROUP = {
-  basetype: 'item', class: 'item',
+  basetype: 'base', class: 'class',
   hasexplicitmod: 'mod', hasimplicitmod: 'mod', hasmod: 'mod',
 };
 
@@ -54,23 +56,32 @@ const inGameValue = (cache, col, table, en) =>
 //   itemFrag   : en->pl Map for PARTIAL base-type rules — n-gram fragments of base
 //                names (e.g. "Essence" -> "Esencja") whose translation still
 //                substring-matches a Polish base, so `BaseType "Essence"` keeps working
-//   itemNames  : full SET of valid in-game base/class names (for == validation)
+//   baseNames  : SET of valid in-game base-type names (BaseItemTypes.Name)
+//   classNames : SET of valid in-game class names    (ItemClasses.Name)
 //   modNames   : full LIST of valid in-game mod names (for substring validation)
-// The name sets are what the game actually holds, so we can drop any filter value
-// that matches nothing — those otherwise make the WHOLE filter fail to load
-// ("No base types found exactly matching ..." / "No mods found matching ...").
+// baseNames and classNames are kept APART because the game matches a BaseType rule
+// only against base-type names and a Class rule only against class names. Conflating
+// them lets a class name whose English contains a base fragment (e.g. base "Uncut
+// Spirit Gem" is a substring of class "Uncut Spirit Gems") leak into a BaseType
+// expansion; matching no base type in-game, it fails the WHOLE filter. The name sets
+// are what the game actually holds, so we can drop any filter value that matches
+// nothing ("No base types found ..." / "No mods found matching ...").
 export async function buildFilterDict({ srcBalanceDir, cache, schema } = {}) {
   schema ??= await loadSchema();
-  const out = { itemNames: new Set(), modNames: new Set(), itemAll: new Map() };
+  const out = {
+    baseNames: new Set(), classNames: new Set(), modNames: new Set(), itemAll: new Map(),
+  };
+  // which in-game name set each item-group table feeds (BaseType vs Class match space)
+  const tableSet = { BaseItemTypes: out.baseNames, ItemClasses: out.classNames };
   const enItemNames = [];
   for (const [group, tables] of Object.entries(DICT_TABLES)) {
     const dict = new Map();
-    const nameSet = group === 'item' ? out.itemNames : out.modNames;
     for (const [table, col] of tables) {
       let buf;
       try { buf = readFileSync(path.join(srcBalanceDir, table + '.datc64')); }
       catch { continue; }
       const cols = readScalarStrings(buf, table, schema, ValidFor.PoE2);
+      const nameSet = group === 'item' ? tableSet[table] : out.modNames;
       for (const en of cols[col]) {
         if (!en) continue;
         const ig = inGameValue(cache, col, table, en);
@@ -85,8 +96,8 @@ export async function buildFilterDict({ srcBalanceDir, cache, schema } = {}) {
 
   // Fragment dict for partial (non-==) BaseType/Class rules: 1..3-word n-grams of
   // base names, translated via the general cache, kept only when the Polish form
-  // still appears inside some in-game base name. >=3 chars avoids noise words.
-  const itemNamesArr = [...out.itemNames];
+  // still appears inside some in-game base/class name. >=3 chars avoids noise words.
+  const itemNamesArr = [...out.baseNames, ...out.classNames];
   const frag = new Map();
   const seen = new Set();
   for (const en of enItemNames) {
@@ -128,19 +139,24 @@ function resolveValue(group, exact, val, dicts) {
     const cand = dicts.mod.get(val) ?? val;
     return { values: [cand], ok: dicts.modNames.some((n) => n.includes(cand)) };
   }
+  // base vs class: validate and expand ONLY against that rule's match space, so a
+  // class name never satisfies a BaseType rule (or vice versa) — the game keeps them
+  // separate and fails the whole filter on a value that matches nothing there.
+  const names = group === 'class' ? dicts.classNames : dicts.baseNames;
   if (exact) {
     const cand = dicts.item.get(val) ?? val;
-    return { values: [cand], ok: dicts.itemNames.has(cand) };
+    return { values: [cand], ok: names.has(cand) };
   }
-  // non-exact item: 1) already a substring of some Polish name -> keep as written.
-  for (const n of dicts.itemNames) if (n.includes(val)) return { values: [val], ok: true };
-  // 2) expand: every in-game name whose ENGLISH source contains the fragment.
+  // non-exact: 1) already a substring of some Polish name in this space -> keep.
+  for (const n of names) if (n.includes(val)) return { values: [val], ok: true };
+  // 2) expand: every in-game name in this space whose ENGLISH source contains the
+  //    fragment (itemAll is base+class; gate on `names` to stay in the right space).
   const exp = [], seenPl = new Set();
-  for (const [en, pl] of dicts.itemAll) if (en.includes(val) && !seenPl.has(pl)) { seenPl.add(pl); exp.push(pl); }
+  for (const [en, pl] of dicts.itemAll) if (en.includes(val) && names.has(pl) && !seenPl.has(pl)) { seenPl.add(pl); exp.push(pl); }
   if (exp.length) return { values: exp, ok: true };
-  // 3) fallback: a fragment translation that still substring-matches some base.
+  // 3) fallback: a fragment translation that still substring-matches some name here.
   const cand = dicts.item.get(val) ?? dicts.itemFrag.get(val);
-  if (cand) for (const n of dicts.itemNames) if (n.includes(cand)) return { values: [cand], ok: true };
+  if (cand) for (const n of names) if (n.includes(cand)) return { values: [cand], ok: true };
   return { values: [], ok: false };
 }
 

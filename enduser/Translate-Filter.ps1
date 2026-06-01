@@ -40,7 +40,9 @@ if (-not (Test-Path $In))   { throw "Filter not found: $In" }
 if (-not (Test-Path $Dict)) { throw "Dictionary not found: $Dict (it ships next to this script)." }
 if (-not $Out) { $Out = [IO.Path]::ChangeExtension($In, $null).TrimEnd('.') + '.pl.filter' }
 
-# Dictionary JSON: { item:[[en,pl]...], mod:[[en,pl]...], itemNames:[...], modNames:[...] }.
+# Dictionary JSON: { item, mod, itemFrag, itemAll: [[en,pl]...], baseNames, classNames,
+# modNames: [...] }. baseNames (base-type names) and classNames are SEPARATE: BaseType
+# rules match only base-type names, Class rules only class names — see the evaluator.
 # -Encoding UTF8 is REQUIRED: Windows PowerShell 5.1 otherwise reads the file as
 # ANSI and corrupts the Polish letters, so the output would not match in-game.
 $json = Get-Content -Raw -Encoding UTF8 -LiteralPath $Dict | ConvertFrom-Json
@@ -59,8 +61,11 @@ $itemMap  = New-Map $json.item
 $modMap   = New-Map $json.mod
 $itemFrag = New-Map $json.itemFrag       # partial-rule fragment translations
 $itemAll  = New-Map $json.itemAll        # ALL base/class names (en->pl), for substring-rule expansion
-$baseNames = [string[]]@($json.itemNames | ForEach-Object { Fold $_ })   # for substring (non-==) checks
+# base-type names and class names are kept apart (BaseType vs Class match space).
+$baseNames = [string[]]@($json.baseNames | ForEach-Object { Fold $_ })   # BaseItemTypes.Name, for BaseType rules
 $baseSet = [System.Collections.Generic.HashSet[string]]::new($baseNames, [System.StringComparer]::Ordinal)
+$classNames = [string[]]@($json.classNames | ForEach-Object { Fold $_ }) # ItemClasses.Name, for Class rules
+$classSet = [System.Collections.Generic.HashSet[string]]::new($classNames, [System.StringComparer]::Ordinal)
 $modNames = [string[]]@($json.modNames | ForEach-Object { Fold $_ })     # for substring checks
 
 $lines = Get-Content -Encoding UTF8 -LiteralPath $In
@@ -71,12 +76,12 @@ $dropped   = [System.Collections.Generic.HashSet[string]]::new([System.StringCom
 $commented = 0
 $script:curGroup = ''; $script:curExact = $false; $script:kept = 0
 
-function Test-ItemSubstr([string]$val) { foreach ($n in $baseNames) { if ($n.Contains($val)) { return $true } } ; return $false }
+function Test-Substr([string]$val, [string[]]$names) { foreach ($n in $names) { if ($n.Contains($val)) { return $true } } ; return $false }
 
 # Resolve a value to the in-game form, or mark it unmatchable. The game fails the
 # WHOLE filter on ANY value matching nothing, partial (non-==) rules included.
-#   item ==   : exact base/class name      mod : substring of some mod name
-#   item (no=): substring of some name; try as-is, then full-name, then fragment.
+#   base/class ==   : exact name in that match space   mod : substring of some mod name
+#   base/class (no=): substring of some name there; try as-is, then full-name, then fragment.
 $evaluator = {
   param($q)
   $v = Fold($q.Groups[1].Value)   # fold to match the patch's lowercase-"ł" game names
@@ -84,22 +89,28 @@ $evaluator = {
   if ($script:curGroup -eq 'mod') {
     $cand = if ($modMap.ContainsKey($v)) { $modMap[$v] } else { $v }
     foreach ($n in $modNames) { if ($n.Contains($cand)) { $outs = @($cand); break } }
-  } elseif ($script:curExact) {
-    $cand = if ($itemMap.ContainsKey($v)) { $itemMap[$v] } else { $v }
-    if ($baseSet.Contains($cand)) { $outs = @($cand) }
-  } elseif (Test-ItemSubstr $v) {
-    $outs = @($v)                 # already a substring of some Polish name
   } else {
-    # EXPAND: every in-game name whose ENGLISH source contains the fragment. MT
-    # renders base nouns inconsistently, so no single Polish substring matches them
-    # all; listing the actual bases is faithful to the original English-substring rule.
-    $exp = [System.Collections.Generic.List[string]]::new()
-    $seenPl = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-    foreach ($en in $itemAll.Keys) { if ($en.Contains($v)) { $pl = $itemAll[$en]; if ($seenPl.Add($pl)) { [void]$exp.Add($pl) } } }
-    if ($exp.Count) { $outs = $exp; if ($exp.Count -gt 1) { $script:expanded++ } }
-    else {
-      $cand = if ($itemMap.ContainsKey($v)) { $itemMap[$v] } elseif ($itemFrag.ContainsKey($v)) { $itemFrag[$v] } else { $null }
-      if ($cand -and (Test-ItemSubstr $cand)) { $outs = @($cand) }
+    # BaseType -> base names, Class -> class names. Never cross spaces, or a class
+    # name could satisfy a BaseType rule (or vice versa) and fail the whole filter.
+    $names = if ($script:curGroup -eq 'class') { $classNames } else { $baseNames }
+    $set   = if ($script:curGroup -eq 'class') { $classSet }   else { $baseSet }
+    if ($script:curExact) {
+      $cand = if ($itemMap.ContainsKey($v)) { $itemMap[$v] } else { $v }
+      if ($set.Contains($cand)) { $outs = @($cand) }
+    } elseif (Test-Substr $v $names) {
+      $outs = @($v)                 # already a substring of some Polish name
+    } else {
+      # EXPAND: every in-game name in this space whose ENGLISH source contains the
+      # fragment. MT renders base nouns inconsistently, so no single Polish substring
+      # matches them all; listing the actual bases is faithful to the English rule.
+      $exp = [System.Collections.Generic.List[string]]::new()
+      $seenPl = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+      foreach ($en in $itemAll.Keys) { if ($en.Contains($v)) { $pl = $itemAll[$en]; if ($set.Contains($pl) -and $seenPl.Add($pl)) { [void]$exp.Add($pl) } } }
+      if ($exp.Count) { $outs = $exp; if ($exp.Count -gt 1) { $script:expanded++ } }
+      else {
+        $cand = if ($itemMap.ContainsKey($v)) { $itemMap[$v] } elseif ($itemFrag.ContainsKey($v)) { $itemFrag[$v] } else { $null }
+        if ($cand -and (Test-Substr $cand $names)) { $outs = @($cand) }
+      }
     }
   }
   if ($outs -and $outs.Count) {
@@ -117,7 +128,8 @@ $result = foreach ($line in $lines) {
   $indent = $m.Groups[1].Value; $kw = $m.Groups[2].Value
   $op = $m.Groups[3].Value;     $rest = $m.Groups[5].Value
   $script:curExact = ($m.Groups[4].Value -eq '==')
-  $script:curGroup = if ($kw.ToLowerInvariant().StartsWith('has')) { 'mod' } else { 'item' }
+  $kwl = $kw.ToLowerInvariant()
+  $script:curGroup = if ($kwl.StartsWith('has')) { 'mod' } elseif ($kwl -eq 'class') { 'class' } else { 'base' }
   $script:kept = 0
   $script:seenLine = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
   $before = $script:translated; $beforeExp = $script:expanded
@@ -135,7 +147,7 @@ $result = foreach ($line in $lines) {
 # Preserve a UTF-8 file (PoE reads UTF-8 filters); avoid a BOM.
 [IO.File]::WriteAllLines($Out, $result, (New-Object Text.UTF8Encoding($false)))
 
-Write-Host "Dictionary entries : $($itemMap.Count) item + $($modMap.Count) mod + $($itemFrag.Count) fragment  |  names: $($baseSet.Count) base/class + $($modNames.Count) mod"
+Write-Host "Dictionary entries : $($itemMap.Count) item + $($modMap.Count) mod + $($itemFrag.Count) fragment  |  names: $($baseSet.Count) base + $($classSet.Count) class + $($modNames.Count) mod"
 Write-Host "Rewrote            : $translated value(s) + expanded $expanded partial rule(s) on $touched line(s)"
 Write-Host "Output             : $Out" -ForegroundColor Green
 if ($dropped.Count) {
