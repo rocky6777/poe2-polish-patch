@@ -7,7 +7,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as zlib from 'zlib';
 import { promisify } from 'util';
-import { cacheEntryHealthy } from './translate.mjs';
+import { cacheEntryHealthy, preserveEdges } from './translate.mjs';
 
 const gzip = promisify(zlib.gzip);
 const ROOT = path.join(import.meta.dirname, '..');
@@ -18,10 +18,20 @@ const REPO = path.join(ROOT, 'translations-repo');
 // run without a rebuild first. Same rule translate.mjs self-heals with; we also
 // rewrite the on-disk cache so it stays clean.
 const raw = JSON.parse(await fs.readFile(CACHE, 'utf-8'));
-const cleaned = Object.fromEntries(Object.entries(raw).filter(([s, v]) => cacheEntryHealthy(s, v)));
+// Drop link-breaking/contaminated entries AND restore MT-trimmed edge whitespace
+// (structural for rare-name fragments / UI prefixes) so neither ships to players.
+const cleaned = {};
+let repaired = 0;
+for (const [s, v] of Object.entries(raw)) {
+  if (!cacheEntryHealthy(s, v)) continue;
+  const e = preserveEdges(s, v);
+  if (e !== v) repaired++;
+  cleaned[s] = e;
+}
 const dropped = Object.keys(raw).length - Object.keys(cleaned).length;
-if (dropped) {
-  console.warn(`Purged ${dropped.toLocaleString()} broken/contaminated cache entries before publishing.`);
+if (dropped || repaired) {
+  if (dropped) console.warn(`Purged ${dropped.toLocaleString()} broken/contaminated cache entries before publishing.`);
+  if (repaired) console.warn(`Restored edge whitespace on ${repaired.toLocaleString()} cache entries before publishing.`);
   await fs.writeFile(CACHE, JSON.stringify(cleaned));
 }
 const json = JSON.stringify(cleaned);

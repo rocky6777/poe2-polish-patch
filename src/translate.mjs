@@ -80,13 +80,32 @@ export function cacheEntryHealthy(src, val) {
   return typeof val === 'string' && markupIntact(src, val) && !sourceContaminated(src);
 }
 
+// The MT engine strips leading/trailing whitespace, but that whitespace is often
+// STRUCTURAL. PoE composes rare item names by concatenating Words fragments where
+// the suffix carries a leading space ("Armageddon" + " Gaze" = "Armageddon Gaze"),
+// and many UI strings are prefixes the engine appends a value onto ("Spectre: {0} ",
+// "Build Loaded: "). Dropping the edge space mashes them together in-game
+// ("ArmagedonSpojrzenie"). So we force the output's leading/trailing whitespace to
+// equal the source's exactly. Edge whitespace sits outside every protected
+// token/link, so this can never disturb markup; pure-whitespace sources are kept
+// verbatim. Exported so loadCache/clean-cache/publish repair legacy entries too.
+export function preserveEdges(src, out) {
+  if (typeof out !== 'string') return out;
+  if (!src.trim()) return src;
+  return src.match(/^\s*/)[0] + out.trim() + src.match(/\s*$/)[0];
+}
+
 async function loadCache() {
   try {
     const all = Object.entries(JSON.parse(await fs.readFile(CACHE_FILE, 'utf-8')));
     const good = all.filter(([s, v]) => cacheEntryHealthy(s, v));
     const dropped = all.length - good.length;
     if (dropped) console.warn(`  cache: dropped ${dropped.toLocaleString()} broken/contaminated entr${dropped === 1 ? 'y' : 'ies'} (will re-translate)`);
-    return new Map(good);
+    // Repair MT-trimmed edge whitespace on legacy entries (lossless, no network).
+    let repaired = 0;
+    const fixed = good.map(([s, v]) => { const e = preserveEdges(s, v); if (e !== v) repaired++; return [s, e]; });
+    if (repaired) console.warn(`  cache: restored edge whitespace on ${repaired.toLocaleString()} entr${repaired === 1 ? 'y' : 'ies'}`);
+    return new Map(fixed);
   } catch { return new Map(); }
 }
 async function saveCache(cache) {
@@ -103,7 +122,7 @@ async function translateOne(text, { sl = 'en', tl = 'pl', retries = 4 } = {}) {
       if (res.status === 429 || res.status >= 500) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const out = restore((data?.[0] ?? []).map((seg) => seg?.[0] ?? '').join(''), tokens);
-      return markupIntact(text, out) && out.trim() ? out : text; // safety net (cache this)
+      return markupIntact(text, out) && out.trim() ? preserveEdges(text, out) : text; // safety net (cache this)
     } catch (err) {
       if (attempt >= retries) return null; // hard failure -> signal "do not cache, retry later"
       await new Promise((r) => setTimeout(r, 400 * 2 ** attempt + Math.random() * 250));
@@ -150,7 +169,7 @@ async function translateBatch(items, sl) {
   const out = new Map();
   for (let i = 0; i < items.length; i++) {
     const restored = restore(parts[i].trim(), masked[i].tokens);
-    out.set(items[i], markupIntact(items[i], restored) && restored.trim() ? restored : null);
+    out.set(items[i], markupIntact(items[i], restored) && restored.trim() ? preserveEdges(items[i], restored) : null);
   }
   return out;
 }
@@ -194,4 +213,4 @@ export async function translateMany(sources, { concurrency = 6, onProgress, sour
   return result;
 }
 
-export const _internal = { protect, restore, markupIntact, translateOne, translateBatch, buildBatches };
+export const _internal = { protect, restore, markupIntact, preserveEdges, translateOne, translateBatch, buildBatches };
