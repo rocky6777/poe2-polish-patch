@@ -17,6 +17,29 @@ const SKIP_TABLE_COLUMNS = new Set([
   'Characters.Name', 'Characters.BaseClass',
 ]);
 
+// Columns we intentionally keep in the ENGLISH SOURCE for a DISPLAY reason (not a
+// crash guard like the set above). These are the columns the engine composes item
+// TITLES from — keeping them English gives fully English item names, which:
+//   (1) FIT the fixed-width tooltip header banner art. Polish names run ~65% wider
+//       than English (2,668 of 4,609 base names land in the overflow zone) and spill
+//       past the banner, dropping the decorated frame to a plain box — a long rare
+//       like "Zwłoki Chwyt Nitowane Rękawiczki" loses its frame; a short one keeps it.
+//   (2) MATCH the trade/market site + wiki, which only search English names.
+// Sources, located via test/find-text.mjs against the pristine English tables:
+//   BaseItemTypes.Name   base type             ("Riveted Mitts")
+//   Mods.Name            magic/rare affix word  ("Cobalt", "of the Wind")
+//   Words.Text/.Text2    rare-name fragments + UNIQUE names ("Goldrim", "Tabula Rasa")
+// Note: Words + Mods are shared with monster naming, so rare/magic MONSTER names go
+// English too. Everything else — stat lines, skills, UI, quests, dialogue, and class
+// names (ItemClasses.Name) — stays Polish. The loot-filter localizer needs no change:
+// with these columns untranslated, in-game names stay English, so English
+// `BaseType "..."` / `HasExplicitMod "..."` filter values already match as-is.
+const KEEP_SOURCE_TABLE_COLUMNS = new Set([
+  'BaseItemTypes.Name',
+  'Mods.Name',
+  'Words.Text', 'Words.Text2',
+]);
+
 // Asset/extension references that appear as string fields but are not text.
 // Trailing \s* tolerates a stray trailing space (some video URLs have one).
 const ASSET_EXT = /\.(dds|ao|aoc|aco|epk|otc|tgt|amd|fmt|mat|sm|smd|tsi|tdt|dgr|ddt|gft|env|ecf|atlas|json|txt|csd|mtd|arm|cht|red|clt|otr|tmd|fxgraph|pet|mtp|srt|bk2|ogg|wav|mp3|avi|act|trl|psg|hlsl)\s*$/i;
@@ -67,6 +90,7 @@ export function shouldTranslate(column, value, table) {
   if (!value) return false;
   if (value.startsWith('[DNT]')) return false;
   if (table && SKIP_TABLE_COLUMNS.has(`${table}.${column}`)) return false;
+  if (table && KEEP_SOURCE_TABLE_COLUMNS.has(`${table}.${column}`)) return false;
   if (SKIP_COLUMNS.has(column)) return false;
   if (SKIP_COLUMN_RE.test(column)) return false;
   if (looksLikeReference(value)) return false;
