@@ -75,9 +75,17 @@ const ONLY = val('--tables')?.split(',').map((s) => s.trim());
 // "Siła"/"więcej"): the binary fixed-row section of a .datc64 (offsets, ints)
 // decodes as UTF-16LE to stray code points that include isolated Polish-range
 // chars, which would false-positive a naive per-character count.
+// Strong Polish letters (ą ć ę ł ń ś ź ż): a reliable signal — they occur neither in
+// PoE's English base NOR in the OTHER-language blocks that .csd files embed (German
+// ä/ö/ü/ß, Spanish/Portuguese ó/ñ/ã, French é/ç, …). ó is Polish too, but it's ALSO
+// common in those flavour blocks, so it belongs ONLY in the per-table density count
+// below (.datc64, where we read just that table's own strings) — NEVER in this
+// whole-file byte heuristic, where it false-positives on any .csd with a Spanish/
+// Portuguese block (every large stat-description file has them).
+const PL_STRONG_CHARS = 'ąćęłńśźżĄĆĘŁŃŚŹŻ';
 function looksContaminated(buf) {
   const s = Buffer.from(buf).toString('utf16le');
-  const re = /[A-Za-z]{2}[łąężźśćńŁĄĘŻŹŚĆŃ]|[łąężźśćńŁĄĘŻŹŚĆŃ][A-Za-z]{2}/g;
+  const re = new RegExp(`[A-Za-z]{2}[${PL_STRONG_CHARS}]|[${PL_STRONG_CHARS}][A-Za-z]{2}`, 'g');
   return (s.match(re) || []).length > 30;
 }
 function contamination(file) {
@@ -96,19 +104,31 @@ function contamination(file) {
 // and our stale Polish (everything else) — that's why a plain patch is NOT a
 // "Verify integrity" and re-snapshotting live blindly would feed Polish back in.
 //
-// We decide from the actual decoded string VALUES, not raw bytes: any Polish-only
-// letter inside a real string column means we wrote it. That's exact (no count
-// threshold) and immune to the fixed-row binary section decoding to stray
-// Polish-range code points. Files we can't parse with the schema (.csd, or schema
-// drift) fall back to the byte-level heuristic, reliable on those large text blobs.
-const POLISH_LETTER = /[łąężźśćńŁĄĘŻŹŚĆŃ]/;
+// We judge from the decoded string VALUES by diacritic DENSITY, not a single hit:
+// our Polish is diacritic-dense (most display strings carry one), whereas PoE2's
+// English flavour text sprinkles ó/í into Norse/Celtic names ("Mórrigan", "ómós",
+// "Brjóta") — a lone ó must NOT read as Polish or we'd stop refreshing those big
+// content tables. So: Polish if >=2 STRONG Polish letters (ą ć ę ł ń ś ź ż — these
+// never occur in the English base) OR diacritics (incl. ó) appear in >=5% of the
+// table's translatable strings. Real data separates cleanly: Atlas 0.67 / poisoned
+// MusicCategories 0.09 vs English NPCTextAudio 0.001, NPCs 0.002. Files we can't
+// parse (.csd, schema drift) fall back to the byte-level heuristic. NOTE: Polish
+// that is 100% diacritic-free ("Rzadki", "Mityczne") still evades this — those rare
+// cases are corrected explicitly in the cache instead.
+const POLISH_DIA = new RegExp(`[${PL_STRONG_CHARS}óÓ]`); // strong set + ó: density signal for .datc64
+const PL_STRONG = new RegExp(`[${PL_STRONG_CHARS}]`);    // ó excluded (English flavour names use it too)
 function isOurPolish(buf, name, schema) {
   if (name && schema) {
     try {
       const cols = readScalarStrings(buf, name, schema, ValidFor.PoE2);
-      for (const values of Object.values(cols))
-        for (const s of values) if (POLISH_LETTER.test(s)) return true;
-      return false;
+      let total = 0, dia = 0, strong = 0;
+      for (const [col, vals] of Object.entries(cols))
+        for (const s of vals) if (s && shouldTranslate(col, s, name)) {
+          total++;
+          if (POLISH_DIA.test(s)) dia++;
+          if (PL_STRONG.test(s)) strong++;
+        }
+      return total > 0 && (strong >= 2 || dia / total >= 0.05);
     } catch { /* schema can't read it -> fall through to byte heuristic */ }
   }
   return looksContaminated(buf);
