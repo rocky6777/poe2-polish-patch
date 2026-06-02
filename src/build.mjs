@@ -88,34 +88,60 @@ function contamination(file) {
   );
 }
 
+// Is this file OUR applied Polish (as opposed to pristine English)?
+//
+// A Steam game *patch* (the small delta download) only rewrites the bundles GGG
+// actually changed; every table it didn't touch keeps the Polish we applied. So
+// after a patch the live game is normally a MIX of fresh English (patched tables)
+// and our stale Polish (everything else) — that's why a plain patch is NOT a
+// "Verify integrity" and re-snapshotting live blindly would feed Polish back in.
+//
+// We decide from the actual decoded string VALUES, not raw bytes: any Polish-only
+// letter inside a real string column means we wrote it. That's exact (no count
+// threshold) and immune to the fixed-row binary section decoding to stray
+// Polish-range code points. Files we can't parse with the schema (.csd, or schema
+// drift) fall back to the byte-level heuristic, reliable on those large text blobs.
+const POLISH_LETTER = /[łąężźśćńŁĄĘŻŹŚĆŃ]/;
+function isOurPolish(buf, name, schema) {
+  if (name && schema) {
+    try {
+      const cols = readScalarStrings(buf, name, schema, ValidFor.PoE2);
+      for (const values of Object.values(cols))
+        for (const s of values) if (POLISH_LETTER.test(s)) return true;
+      return false;
+    } catch { /* schema can't read it -> fall through to byte heuristic */ }
+  }
+  return looksContaminated(buf);
+}
+
 // Resolve the PRISTINE English source for a bundled file, immune to our own
-// patching. If the live file equals our last staged output, the game currently
-// holds our patch -> use the saved backup as source. Otherwise the live file is
-// pristine (first run, or freshly overwritten by a Steam update) -> snapshot it.
-async function pristineFile(loader, gamePath, stagePath, bakPath) {
+// patching AND to partial game patches. If the live file is our Polish, translate
+// from the saved English backup; if it's clean English (first run, or a table the
+// latest patch just rewrote), (re)snapshot it so its new/changed text is picked up.
+// This lets a re-run after a normal patch self-heal WITHOUT "Verify integrity" —
+// only a missing/poisoned backup forces that.
+async function pristineFile(loader, gamePath, bakPath, name = null, schema = null) {
   const live = await loader.tryGetFileContents(gamePath);
   if (!live) return null;
   const liveBuf = Buffer.from(live);
-  let prevStage = null;
-  try { prevStage = await fs.readFile(stagePath); } catch {}
-  if (prevStage && prevStage.equals(liveBuf)) {
-    // Live is our own patch -> the pristine English is in the backup.
+  if (isOurPolish(liveBuf, name, schema)) {
+    // Live holds our Polish -> the pristine English is in the backup.
     let bak;
     try { bak = await fs.readFile(bakPath); } catch { bak = null; }
     if (bak) {
-      if (looksContaminated(bak)) throw contamination(bakPath);
+      if (isOurPolish(bak, name, schema)) throw contamination(bakPath); // backup itself poisoned
       return { source: bak, live: liveBuf };
     }
+    // Polish live with no backup is genuinely unrecoverable -> need verify-integrity.
+    throw contamination(gamePath);
   }
-  // Live is pristine (first run / freshly Steam-updated) -> (re)snapshot it.
-  if (looksContaminated(liveBuf)) throw contamination(gamePath);
+  // Live is clean English (first run / freshly Steam-patched) -> (re)snapshot it.
   await fs.mkdir(path.dirname(bakPath), { recursive: true });
   await fs.writeFile(bakPath, liveBuf);
   return { source: liveBuf, live: liveBuf };
 }
-const pristineSource = (loader, name) => pristineFile(
-  loader, `${SRC_PATH}/${name}.datc64`,
-  path.join(STAGE, `${name}.datc64`), path.join(SRCBAK, `${name}.datc64`),
+const pristineSource = (loader, name, schema) => pristineFile(
+  loader, `${SRC_PATH}/${name}.datc64`, path.join(SRCBAK, `${name}.datc64`), name, schema,
 );
 
 async function main() {
@@ -166,7 +192,7 @@ async function main() {
   const present = []; // {name, source, live}
   let chars = 0;
   for (const name of candidates) {
-    const ps = await pristineSource(loader, name);
+    const ps = await pristineSource(loader, name, schema);
     if (!ps) continue; // table has no English base file -> nothing to do
     let cols;
     try { cols = readScalarStrings(ps.source, name, schema, ValidFor.PoE2); }
@@ -185,7 +211,7 @@ async function main() {
   // set so they share the cache and the link/markup protection in translate.mjs.
   const csdPresent = []; // {file, source, live}
   for (const f of CSD_FILES) {
-    const ps = await pristineFile(loader, `${CSD_DIR}/${f}`, path.join(STAGE_CSD, f), path.join(SRCBAK_CSD, f));
+    const ps = await pristineFile(loader, `${CSD_DIR}/${f}`, path.join(SRCBAK_CSD, f));
     if (!ps) continue;
     for (const s of collectCsdStrings(ps.source)) {
       if (!s || valueIsNonText(s)) continue;
