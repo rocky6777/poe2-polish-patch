@@ -40,6 +40,18 @@ const KEEP_SOURCE_TABLE_COLUMNS = new Set([
   'Words.Text', 'Words.Text2',
 ]);
 
+// Whole tables that contain NO player-facing display text — only engine identifiers,
+// asset names, and markup the engine matches VERBATIM. ItemFrameType is the item-
+// tooltip frame config: its Header*/HardmodeHeader* columns hold the NAME of the
+// header-banner art per rarity ("ItemsHeaderMagic", "ItemsHeaderUniqueSingleLine", …).
+// Those are bare CamelCase identifiers with no slash/extension, so looksLikeReference()
+// and looksLikeIdentifier() both miss them and they got translated to Polish — the
+// engine then can't resolve the banner art and falls back to a plain box (the "broken
+// frame" on item hover tooltips). Nothing here is shown to players, so skip the table.
+const SKIP_TABLES = new Set([
+  'ItemFrameType',
+]);
+
 // Asset/extension references that appear as string fields but are not text.
 // Trailing \s* tolerates a stray trailing space (some video URLs have one).
 const ASSET_EXT = /\.(dds|ao|aoc|aco|epk|otc|tgt|amd|fmt|mat|sm|smd|tsi|tdt|dgr|ddt|gft|env|ecf|atlas|json|txt|csd|mtd|arm|cht|red|clt|otr|tmd|fxgraph|pet|mtp|srt|bk2|ogg|wav|mp3|avi|act|trl|psg|hlsl)\s*$/i;
@@ -89,6 +101,7 @@ export function looksLikeIdentifier(s) {
 export function shouldTranslate(column, value, table) {
   if (!value) return false;
   if (value.startsWith('[DNT]')) return false;
+  if (table && SKIP_TABLES.has(table)) return false;
   if (table && SKIP_TABLE_COLUMNS.has(`${table}.${column}`)) return false;
   if (table && KEEP_SOURCE_TABLE_COLUMNS.has(`${table}.${column}`)) return false;
   if (SKIP_COLUMNS.has(column)) return false;
