@@ -55,6 +55,17 @@ Write-Host '== Applying into Bundles2 ==' -ForegroundColor Cyan
 & $exe $index $staging
 if ($LASTEXITCODE) { throw 'ApplyPolish failed' }
 
+# 4b) Commit the applied-hash map now that the apply actually succeeded. build.mjs
+#     wrote it as applied-hashes.pending.json (sha256 of every table's Polish bytes);
+#     promoting it ONLY here keeps the record in lock-step with what is truly live.
+#     The throw above guarantees we never reach this on a failed/partial apply, so a
+#     botched run leaves the previous (correct) map intact and the next rebuild still
+#     self-heals. Lets build.mjs recognise diacritic-free Polish ("Rzadki"/"Mityczne")
+#     it otherwise can't — see src/build.mjs isOurPolish().
+$pendingMap = Join-Path $root 'out\applied-hashes.pending.json'
+$appliedMap = Join-Path $root 'out\applied-hashes.json'
+if (Test-Path $pendingMap) { Move-Item -LiteralPath $pendingMap -Destination $appliedMap -Force }
+
 Write-Host "`nDone. Launch PoE2 and pick English in Options. You should see Polish." -ForegroundColor Green
 Write-Host "After a Steam patch: just re-run this script." -ForegroundColor Yellow
 Write-Host "Revert: Steam > PoE2 > Properties > Installed Files > Verify integrity of game files." -ForegroundColor Yellow

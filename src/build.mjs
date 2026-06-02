@@ -10,6 +10,8 @@
 // The staging output is applied to the game by the separate C# tool (needs oo2core).
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { createHash } from 'crypto';
+import { pathToFileURL } from 'url';
 import { loadSchema, ValidFor, POE2_LANG_PATH } from './schema.mjs';
 import { patchTable, readScalarStrings } from './datWriter.mjs';
 import { translateMany } from './translate.mjs';
@@ -55,6 +57,17 @@ const CSD_FILES_FALLBACK = [
 ];
 const STAGE_CSD = path.join(import.meta.dirname, '..', 'out', 'staging', CSD_DIR);
 const SRCBAK_CSD = path.join(import.meta.dirname, '..', 'out', 'source-en', CSD_DIR);
+// Per-file SHA-256 of the bytes we last APPLIED as our Polish, keyed by in-game
+// path. This is the reliable signal isOurPolish() needs for tables whose CORRECT
+// Polish is 100% diacritic-free (HideoutRarity: "Rzadki"/"Mityczne") — the density
+// and byte heuristics structurally cannot see those, so a later patch that leaves
+// such a table untouched would otherwise re-snapshot our Polish as the "English"
+// backup. build.mjs WRITES the map as *.pending.json after staging; rebuild.ps1
+// promotes it to applied-hashes.json ONLY after ApplyPolish succeeds, so the
+// record can never run ahead of what is actually live (a failed/partial apply
+// leaves the previous, correct map in place). See [[patch-update-vs-verify-integrity]].
+const APPLIED = path.join(import.meta.dirname, '..', 'out', 'applied-hashes.json');
+const APPLIED_PENDING = path.join(import.meta.dirname, '..', 'out', 'applied-hashes.pending.json');
 
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
@@ -112,12 +125,19 @@ function contamination(file) {
 // never occur in the English base) OR diacritics (incl. ó) appear in >=5% of the
 // table's translatable strings. Real data separates cleanly: Atlas 0.67 / poisoned
 // MusicCategories 0.09 vs English NPCTextAudio 0.001, NPCs 0.002. Files we can't
-// parse (.csd, schema drift) fall back to the byte-level heuristic. NOTE: Polish
-// that is 100% diacritic-free ("Rzadki", "Mityczne") still evades this — those rare
-// cases are corrected explicitly in the cache instead.
+// parse (.csd, schema drift) fall back to the byte-level heuristic. The diacritic
+// heuristics below are blind to Polish that carries NO diacritics ("Rzadki",
+// "Mityczne"); `appliedHash` closes that gap — when the live bytes hash-match the
+// Polish we last applied, the table is ours no matter how it reads.
 const POLISH_DIA = new RegExp(`[${PL_STRONG_CHARS}óÓ]`); // strong set + ó: density signal for .datc64
 const PL_STRONG = new RegExp(`[${PL_STRONG_CHARS}]`);    // ó excluded (English flavour names use it too)
-function isOurPolish(buf, name, schema) {
+export const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+export function isOurPolish(buf, name, schema, appliedHash) {
+  // A byte-exact match to what we last applied IS our Polish, full stop — the only
+  // reliable signal for diacritic-free tables (the heuristics below cannot see
+  // them). Positive override ONLY: on a miss we fall through to the heuristic, so a
+  // stale or absent record can never misread real Polish as "English".
+  if (appliedHash && sha256(buf) === appliedHash) return true;
   if (name && schema) {
     try {
       const cols = readScalarStrings(buf, name, schema, ValidFor.PoE2);
@@ -134,22 +154,39 @@ function isOurPolish(buf, name, schema) {
   return looksContaminated(buf);
 }
 
+// In-game paths used to key the applied-hash map (and to read the live bundles).
+const datGamePath = (name) => `${SRC_PATH}/${name}.datc64`;
+const csdGamePath = (file) => `${CSD_DIR}/${file}`;
+
+// gamePath -> sha256 of the Polish we last applied. Loaded once at startup (empty
+// on the first run / before any apply) and consulted by isOurPolish as a positive
+// override. Every entry is a Polish hash: we only record a table whose patched
+// bytes actually differ from the English source (changed > 0), so a hash match
+// against either the live file OR the backup unambiguously means "our Polish".
+let appliedHashes = new Map();
+async function loadAppliedHashes() {
+  try { return new Map(Object.entries(JSON.parse(await fs.readFile(APPLIED, 'utf8')))); }
+  catch { return new Map(); } // missing/corrupt -> fall back to heuristics everywhere
+}
+
 // Resolve the PRISTINE English source for a bundled file, immune to our own
 // patching AND to partial game patches. If the live file is our Polish, translate
 // from the saved English backup; if it's clean English (first run, or a table the
 // latest patch just rewrote), (re)snapshot it so its new/changed text is picked up.
 // This lets a re-run after a normal patch self-heal WITHOUT "Verify integrity" —
-// only a missing/poisoned backup forces that.
-async function pristineFile(loader, gamePath, bakPath, name = null, schema = null) {
+// only a missing/poisoned backup forces that. `hashes` is injectable for testing.
+export async function pristineFile(loader, gamePath, bakPath, name = null, schema = null, hashes = appliedHashes) {
   const live = await loader.tryGetFileContents(gamePath);
   if (!live) return null;
   const liveBuf = Buffer.from(live);
-  if (isOurPolish(liveBuf, name, schema)) {
+  const ah = hashes.get(gamePath); // sha256 of the Polish we last applied here, if any
+  if (isOurPolish(liveBuf, name, schema, ah)) {
     // Live holds our Polish -> the pristine English is in the backup.
     let bak;
     try { bak = await fs.readFile(bakPath); } catch { bak = null; }
     if (bak) {
-      if (isOurPolish(bak, name, schema)) throw contamination(bakPath); // backup itself poisoned
+      // Backup that hash-matches our applied Polish (or reads as Polish) is poisoned.
+      if (isOurPolish(bak, name, schema, ah)) throw contamination(bakPath);
       return { source: bak, live: liveBuf };
     }
     // Polish live with no backup is genuinely unrecoverable -> need verify-integrity.
@@ -161,7 +198,7 @@ async function pristineFile(loader, gamePath, bakPath, name = null, schema = nul
   return { source: liveBuf, live: liveBuf };
 }
 const pristineSource = (loader, name, schema) => pristineFile(
-  loader, `${SRC_PATH}/${name}.datc64`, path.join(SRCBAK, `${name}.datc64`), name, schema,
+  loader, datGamePath(name), path.join(SRCBAK, `${name}.datc64`), name, schema,
 );
 
 async function main() {
@@ -178,6 +215,9 @@ async function main() {
 
   const schema = await loadSchema();
   const loader = await makeLoader(STEAM);
+  // Record of the Polish we last applied (per file); lets PASS 1 recognise our own
+  // Polish even when it's diacritic-free. Empty until the first successful apply.
+  appliedHashes = await loadAppliedHashes();
 
   // Discover every stat-description .csd from the bundle index (fall back to the
   // known list if enumeration fails) so new content files don't stay English.
@@ -231,7 +271,7 @@ async function main() {
   // set so they share the cache and the link/markup protection in translate.mjs.
   const csdPresent = []; // {file, source, live}
   for (const f of CSD_FILES) {
-    const ps = await pristineFile(loader, `${CSD_DIR}/${f}`, path.join(SRCBAK_CSD, f));
+    const ps = await pristineFile(loader, csdGamePath(f), path.join(SRCBAK_CSD, f));
     if (!ps) continue;
     for (const s of collectCsdStrings(ps.source)) {
       if (!s || valueIsNonText(s)) continue;
@@ -276,10 +316,17 @@ async function main() {
 
   await fs.mkdir(STAGE, { recursive: true });
   const translate = (s, ctx) => (shouldTranslate(ctx.column, s, ctx.table) ? map.get(s) ?? null : null);
+  // Carry forward the current map (so a --tables subset run keeps other tables'
+  // records) and refresh every table we re-examine. Record only when the patched
+  // bytes actually carry Polish (changed > 0); otherwise drop the entry, since the
+  // table is now English (a restore, or kept-English columns) — see record note above.
+  const pending = new Map(appliedHashes);
   let written = 0, restored = 0, fields = 0;
   for (const { name, source, live } of present) {
     const res = patchTable(source, name, schema, ValidFor.PoE2, translate);
     if (!res) continue;
+    if (res.stats.changed > 0) pending.set(datGamePath(name), sha256(res.bytes));
+    else pending.delete(datGamePath(name));
     const outPath = path.join(STAGE, `${name}.datc64`);
     // Stage whenever the desired bytes differ from what's live: covers new
     // translations AND restoring a table whose live copy is stale/corrupted.
@@ -301,6 +348,8 @@ async function main() {
   let csdWritten = 0, csdLines = 0;
   for (const { file, source, live } of csdPresent) {
     const res = patchCsd(source, csdTranslate);
+    if (res.stats.changed > 0) pending.set(csdGamePath(file), sha256(res.bytes));
+    else pending.delete(csdGamePath(file));
     const outPath = path.join(STAGE_CSD, file);
     if (res.bytes.equals(live)) { await fs.rm(outPath, { force: true }); continue; } // drop stale (see datc64 loop)
     await fs.mkdir(STAGE_CSD, { recursive: true });
@@ -308,6 +357,11 @@ async function main() {
     csdWritten++; csdLines += res.stats.changed;
   }
   console.log(`Staged ${csdWritten} .csd files (${csdLines.toLocaleString()} stat lines) to:\n  ${STAGE_CSD}`);
+
+  // Stage the applied-hash map. rebuild.ps1 promotes it to applied-hashes.json only
+  // AFTER ApplyPolish succeeds, so the record never claims Polish that isn't live.
+  await fs.writeFile(APPLIED_PENDING, JSON.stringify(Object.fromEntries(pending)));
+  console.log(`Staged applied-hash map (${pending.size.toLocaleString()} files) to:\n  ${APPLIED_PENDING}`);
 
   // PASS 2c — emit the loot-filter dictionary (en->pl for the BaseType/Class
   // columns the filter engine matches). Shipped alongside the patch so players
@@ -325,4 +379,8 @@ async function main() {
   console.log('  ApplyPolish "<...>/Bundles2/_.index.bin"  out/staging');
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+// Run only when invoked directly (`node src/build.mjs …`); stay importable so
+// tests can exercise isOurPolish/pristineFile without kicking off a real build.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => { console.error(e); process.exit(1); });
+}
