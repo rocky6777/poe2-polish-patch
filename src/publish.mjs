@@ -38,14 +38,35 @@ const json = JSON.stringify(cleaned);
 const count = Object.keys(cleaned).length;
 await fs.mkdir(REPO, { recursive: true });
 
-// bump version
-let version = 1;
-try { version = Number(JSON.parse(await fs.readFile(path.join(REPO, 'manifest.json'), 'utf-8')).version) + 1; } catch {}
-
 const gz = await gzip(Buffer.from(json, 'utf-8'), { level: 9 });
-await fs.writeFile(path.join(REPO, 'translations.pl.json.gz'), gz);
+const gzPath = path.join(REPO, 'translations.pl.json.gz');
+const manifestPath = path.join(REPO, 'manifest.json');
+
+// Read the currently-published version (if any).
+let prevVersion = 0, prevManifestOk = false;
+try {
+  prevVersion = Number(JSON.parse(await fs.readFile(manifestPath, 'utf-8')).version) || 0;
+  prevManifestOk = true;
+} catch {}
+
+// gzip is deterministic, so a byte-identical gz means the translations did not
+// change since the last publish. Bumping the version anyway would force every
+// up-to-date client to re-download the identical ~5 MB blob (remote.mjs gates
+// purely on version), so an unchanged publish must be a true no-op: no version
+// bump, no rewrite — nothing for git to commit.
+let prevGz = null;
+try { prevGz = await fs.readFile(gzPath); } catch {}
+if (prevManifestOk && prevGz && prevGz.equals(gz)) {
+  console.log(`No change: translations identical to published v${prevVersion} ` +
+    `(${count.toLocaleString()} strings). Nothing to publish.`);
+  process.exit(0);
+}
+
+// bump version (only reached when the gz actually changed)
+const version = prevVersion + 1;
+await fs.writeFile(gzPath, gz);
 const manifest = { version, updated: new Date().toISOString().slice(0, 10), count };
-await fs.writeFile(path.join(REPO, 'manifest.json'), JSON.stringify(manifest, null, 2));
+await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 await fs.writeFile(path.join(REPO, 'README.md'),
   `# PoE2 Polish translations (data)\n\n` +
   `Machine-translated English→Polish strings for the PoE2 Polish patcher.\n` +

@@ -51,7 +51,28 @@ if (-not (Test-Path $dll)) {
 }
 
 # 4) Apply into Bundles2 (recompresses via Oodle, writes _.index.bin in place).
-Write-Host '== Applying into Bundles2 ==' -ForegroundColor Cyan
+$pendingMap = Join-Path $root 'out\applied-hashes.pending.json'
+$appliedMap = Join-Path $root 'out\applied-hashes.json'
+
+# build.mjs stages a table ONLY when its live bytes differ from the desired Polish,
+# so an empty staging dir means the live game already matches the current Polish —
+# there is nothing to apply. That's SUCCESS, not failure (and ApplyPolish errors on
+# empty input). The usual cause is a re-run before a Steam patch actually changed
+# anything: e.g. the update is still queued/downloading, so the live bundles are
+# untouched — let Steam FINISH, then re-run. No "Verify integrity" is involved; the
+# English backup in out\source-en is intact (build.mjs only re-snapshots tables the
+# patch reset to English, and here it found none).
+$staged = @(Get-ChildItem -Path $staging -Recurse -File -Include '*.datc64','*.csd' -ErrorAction SilentlyContinue)
+if ($staged.Count -eq 0) {
+  Write-Host "`nNothing to apply — the live game already matches the current Polish (0 changed tables)." -ForegroundColor Green
+  Write-Host "If a Steam update is still queued/downloading, let it finish, then re-run." -ForegroundColor Yellow
+  # Live is unchanged, so applied-hashes.json already describes it; drop the
+  # (identical) pending map instead of promoting it.
+  Remove-Item -LiteralPath $pendingMap -Force -ErrorAction SilentlyContinue
+  exit 100   # sentinel: "nothing to do" — release.bat stops the pipeline cleanly
+}
+
+Write-Host "== Applying into Bundles2 ($($staged.Count) staged file(s)) ==" -ForegroundColor Cyan
 & $exe $index $staging
 if ($LASTEXITCODE) { throw 'ApplyPolish failed' }
 
@@ -62,8 +83,6 @@ if ($LASTEXITCODE) { throw 'ApplyPolish failed' }
 #     botched run leaves the previous (correct) map intact and the next rebuild still
 #     self-heals. Lets build.mjs recognise diacritic-free Polish ("Rzadki"/"Mityczne")
 #     it otherwise can't — see src/build.mjs isOurPolish().
-$pendingMap = Join-Path $root 'out\applied-hashes.pending.json'
-$appliedMap = Join-Path $root 'out\applied-hashes.json'
 if (Test-Path $pendingMap) { Move-Item -LiteralPath $pendingMap -Destination $appliedMap -Force }
 
 Write-Host "`nDone. Launch PoE2 and pick English in Options. You should see Polish." -ForegroundColor Green

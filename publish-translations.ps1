@@ -32,6 +32,10 @@ if ($NoPush) { Write-Host 'Generated (not pushed).' -ForegroundColor Green; retu
 
 $ver = (Get-Content (Join-Path $repo 'manifest.json') -Raw | ConvertFrom-Json).version
 git -C $repo add -A
+if (-not (git -C $repo status --porcelain)) {
+  Write-Host 'No translation changes since last publish — nothing to commit/push.' -ForegroundColor Yellow
+  return
+}
 git -C $repo commit -m "Update translations v$ver"
 git -C $repo push
 Write-Host "Pushed translations v$ver." -ForegroundColor Green
